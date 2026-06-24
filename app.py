@@ -98,43 +98,84 @@ def get_supplier_options():
 # PAGE: TASKS
 # =========================================================
 if page == "Tasks":
-    st.title("Today's tasks")
-    st.caption("Daily instructions for the kitchen and floor team.")
+    st.title("Weekly task workspace")
+    st.caption("Weekly recurring tasks reset every Monday. One-off tasks stay completed once ticked.")
+
+    DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 
     conn = db.get_connection()
-    all_tasks = conn.execute("SELECT * FROM tasks ORDER BY id").fetchall()
+    all_task_defs = conn.execute("SELECT * FROM task_definitions ORDER BY section, title").fetchall()
     conn.close()
 
-    for section in ["Kitchen", "Floor"]:
-        st.subheader(section)
-        section_tasks = [t for t in all_tasks if t["section"] == section]
-        if not section_tasks:
-            st.write("No tasks yet.")
-        for t in section_tasks:
-            checked = st.checkbox(
-                t["title"], value=bool(t["done"]), key=f"task_check_{t['id']}"
-            )
-            if t["done"]:
-                st.caption(f"✅ Completed by {t['completed_by']} at {t['completed_at']}")
+    if "pending_pin_task" not in st.session_state:
+        st.session_state.pending_pin_task = None  # holds a unique key like "12-weekly" while awaiting PIN
 
-            if checked and not t["done"]:
+    for day in DAYS:
+        day_tasks = [t for t in all_task_defs if t["day_of_week"] == day]
+        with st.container(border=True):
+            st.subheader(day)
+            if not day_tasks:
+                st.caption("No tasks assigned to this day.")
+            for section in ["Kitchen", "Floor"]:
+                section_tasks = [t for t in day_tasks if t["section"] == section]
+                if not section_tasks:
+                    continue
+                st.markdown(f"**{section}**")
+
                 conn = db.get_connection()
-                conn.execute(
-                    "UPDATE tasks SET done=1, completed_by=?, completed_at=? WHERE id=?",
-                    (current_user["name"], datetime.now().strftime("%-I:%M %p"), t["id"])
-                )
-                conn.commit()
+                for t in section_tasks:
+                    pending_key = f"{t['id']}-pending"
+                    is_done, completed_by, completed_at = db.get_task_completion(t, conn)
+
+                    row_cols = st.columns([5, 2])
+                    with row_cols[0]:
+                        if t["recurrence"] == "once" and t["specific_date"]:
+                            st.write(f"{t['title']}  _(one-off: {t['specific_date']})_")
+                        else:
+                            st.write(t["title"])
+                        if t["notes"]:
+                            with st.expander("Notes"):
+                                st.write(t["notes"])
+
+                    with row_cols[1]:
+                        if is_done:
+                            st.success(f"✅ {completed_by} at {completed_at}")
+                            if st.button("Undo", key=f"undo_{t['id']}"):
+                                if t["recurrence"] == "weekly":
+                                    conn.execute(
+                                        "DELETE FROM task_log WHERE task_id=? AND week_start_date=?",
+                                        (t["id"], db.get_week_start())
+                                    )
+                                else:
+                                    conn.execute("DELETE FROM task_log WHERE task_id=?", (t["id"],))
+                                conn.commit()
+                                st.rerun()
+                        elif st.session_state.pending_pin_task == pending_key:
+                            pin_try = st.text_input("Worker PIN", type="password", key=f"pin_input_{t['id']}")
+                            confirm_col, cancel_col = st.columns(2)
+                            with confirm_col:
+                                if st.button("Confirm", key=f"confirm_{t['id']}"):
+                                    staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_try,)).fetchone()
+                                    if staff_match is None:
+                                        st.error("PIN not recognized.")
+                                    else:
+                                        week_val = db.get_week_start() if t["recurrence"] == "weekly" else None
+                                        conn.execute(
+                                            "INSERT INTO task_log (task_id, week_start_date, completed_by, completed_at) VALUES (?, ?, ?, ?)",
+                                            (t["id"], week_val, staff_match["name"], datetime.now().strftime("%-I:%M %p"))
+                                        )
+                                        conn.commit()
+                                        st.session_state.pending_pin_task = None
+                                        st.rerun()
+                            with cancel_col:
+                                if st.button("Cancel", key=f"cancel_{t['id']}"):
+                                    st.session_state.pending_pin_task = None
+                                    st.rerun()
+                        else:
+                            if st.button("Mark complete", key=f"complete_{t['id']}"):
+                                st.session_state.pending_pin_task = pending_key
+                                st.rerun()
                 conn.close()
-                st.rerun()
-            elif not checked and t["done"]:
-                conn = db.get_connection()
-                conn.execute(
-                    "UPDATE tasks SET done=0, completed_by=NULL, completed_at=NULL WHERE id=?",
-                    (t["id"],)
-                )
-                conn.commit()
-                conn.close()
-                st.rerun()
         st.write("")
 
     if is_manager:
@@ -143,6 +184,16 @@ if page == "Tasks":
         with st.form("add_task_form", clear_on_submit=True):
             task_title = st.text_input("Task description")
             task_section = st.selectbox("Section", ["Kitchen", "Floor"])
+            task_notes = st.text_area("Notes (multi-line instructions for the team)")
+            recurrence_choice = st.radio("Repeats?", ["Repeats every week", "One-off (specific date)"], horizontal=True)
+
+            if recurrence_choice == "Repeats every week":
+                task_day = st.selectbox("Which day of the week?", DAYS)
+                task_specific_date = None
+            else:
+                task_specific_date = st.date_input("Date", value=date.today())
+                task_day = DAYS[task_specific_date.weekday()]
+
             submitted = st.form_submit_button("Add task")
             if submitted:
                 if not task_title:
@@ -150,8 +201,16 @@ if page == "Tasks":
                 else:
                     conn = db.get_connection()
                     conn.execute(
-                        "INSERT INTO tasks (title, section, created_by, created_at, done) VALUES (?, ?, ?, ?, 0)",
-                        (task_title, task_section, current_user["name"], date.today().isoformat())
+                        """INSERT INTO task_definitions
+                           (title, section, notes, recurrence, day_of_week, specific_date, created_by, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            task_title, task_section, task_notes,
+                            "weekly" if recurrence_choice == "Repeats every week" else "once",
+                            task_day,
+                            task_specific_date.isoformat() if task_specific_date else None,
+                            current_user["name"], date.today().isoformat()
+                        )
                     )
                     conn.commit()
                     conn.close()
@@ -161,14 +220,14 @@ if page == "Tasks":
         st.divider()
         st.subheader("Remove a task")
         conn = db.get_connection()
-        removable = conn.execute("SELECT id, title, section FROM tasks ORDER BY section, title").fetchall()
+        removable = conn.execute("SELECT id, title, section, day_of_week FROM task_definitions ORDER BY day_of_week, section, title").fetchall()
         conn.close()
         if removable:
-            labels = {f"[{t['section']}] {t['title']}": t["id"] for t in removable}
+            labels = {f"[{t['day_of_week']} / {t['section']}] {t['title']}": t["id"] for t in removable}
             to_remove_label = st.selectbox("Choose a task to remove", list(labels.keys()))
             if st.button("Remove task"):
                 conn = db.get_connection()
-                conn.execute("DELETE FROM tasks WHERE id = ?", (labels[to_remove_label],))
+                conn.execute("DELETE FROM task_definitions WHERE id = ?", (labels[to_remove_label],))
                 conn.commit()
                 conn.close()
                 st.success("Task removed.")
@@ -759,6 +818,56 @@ elif page == "Staff":
                     st.success(f"Added {new_name}.")
                     st.rerun()
                 conn.close()
+
+    st.divider()
+    st.subheader("Edit an existing staff member")
+    if not staff_rows:
+        st.info("No staff yet — add one above first.")
+    else:
+        edit_labels = {f"{s['name']} ({s['role']})": s["id"] for s in staff_rows}
+        edit_chosen_label = st.selectbox("Choose a staff member to edit", list(edit_labels.keys()), key="edit_staff_select")
+        edit_id = edit_labels[edit_chosen_label]
+
+        conn = db.get_connection()
+        edit_current = conn.execute("SELECT * FROM staff WHERE id = ?", (edit_id,)).fetchone()
+        conn.close()
+
+        with st.form(f"edit_staff_form_{edit_id}"):
+            col1, col2 = st.columns(2)
+            with col1:
+                e_name = st.text_input("Name", value=edit_current["name"])
+                e_pin = st.text_input("PIN (4-6 digits)", value=edit_current["pin"], max_chars=6)
+            with col2:
+                role_choices = ["staff", "manager", "owner"]
+                e_role = st.selectbox("Role", role_choices, index=role_choices.index(edit_current["role"]))
+                e_shared = st.checkbox("This is a shared device PIN (e.g. shop iPad)", value=bool(edit_current["is_shared_device"]))
+
+            update_submitted = st.form_submit_button("Update staff member")
+            if update_submitted:
+                if not e_name or not e_pin:
+                    st.error("Name and PIN can't be empty.")
+                else:
+                    conn = db.get_connection()
+                    pin_clash = conn.execute(
+                        "SELECT id FROM staff WHERE pin = ? AND id != ?", (e_pin, edit_id)
+                    ).fetchone()
+                    if pin_clash:
+                        st.error("That PIN is already used by someone else — choose a different one.")
+                        conn.close()
+                    else:
+                        owner_count = conn.execute("SELECT COUNT(*) AS c FROM staff WHERE role='owner'").fetchone()["c"]
+                        if edit_current["role"] == "owner" and e_role != "owner" and owner_count <= 1:
+                            st.error("Can't change the role of the only owner account. Add another owner first.")
+                            conn.close()
+                        else:
+                            conn.execute(
+                                "UPDATE staff SET name=?, pin=?, role=?, is_shared_device=? WHERE id=?",
+                                (e_name, e_pin, e_role, 1 if e_shared else 0, edit_id)
+                            )
+                            conn.commit()
+                            conn.close()
+                            st.success(f"Updated {e_name}.")
+                            st.rerun()
 
     st.divider()
     st.subheader("Remove a staff member")

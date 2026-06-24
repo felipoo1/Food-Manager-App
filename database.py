@@ -10,7 +10,7 @@ without needing to know any SQL itself.
 
 import sqlite3
 import os
-from datetime import date
+from datetime import date, timedelta
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "cafe.db")
 
@@ -119,6 +119,31 @@ def init_db():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS task_definitions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            section TEXT NOT NULL,         -- 'Kitchen' or 'Floor'
+            notes TEXT,                    -- multi-line instructions
+            recurrence TEXT NOT NULL,      -- 'weekly' or 'once'
+            day_of_week TEXT NOT NULL,     -- 'Monday'..'Sunday' (which day's box this shows in)
+            specific_date TEXT,            -- only set for 'once' tasks
+            created_by TEXT,
+            created_at TEXT
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS task_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id INTEGER NOT NULL,
+            week_start_date TEXT,          -- Monday's date of the week it was completed (weekly tasks)
+            completed_by TEXT,
+            completed_at TEXT,
+            FOREIGN KEY (task_id) REFERENCES task_definitions(id) ON DELETE CASCADE
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -218,6 +243,44 @@ def food_cost_status(food_cost_pct):
     if food_cost_pct > 25:
         return "warning"
     return "ok"
+
+
+def get_week_start(d=None):
+    """Returns the ISO date string of the Monday of the week containing the given date (default: today)."""
+    if d is None:
+        d = date.today()
+    monday = d - timedelta(days=d.weekday())
+    return monday.isoformat()
+
+
+def get_task_completion(task, conn=None):
+    """
+    Checks whether a task is currently 'done':
+    - 'weekly' tasks reset automatically each week (checks for a log entry in the CURRENT week)
+    - 'once' tasks stay done forever once completed (checks for any log entry at all)
+    Returns (is_done, completed_by, completed_at) or (False, None, None).
+    """
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+
+    if task["recurrence"] == "weekly":
+        row = conn.execute(
+            "SELECT * FROM task_log WHERE task_id = ? AND week_start_date = ? ORDER BY id DESC LIMIT 1",
+            (task["id"], get_week_start())
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT * FROM task_log WHERE task_id = ? ORDER BY id DESC LIMIT 1",
+            (task["id"],)
+        ).fetchone()
+
+    if owns_conn:
+        conn.close()
+
+    if row:
+        return True, row["completed_by"], row["completed_at"]
+    return False, None, None
 
 
 def cost_per_recipe_unit(ingredient_row):
