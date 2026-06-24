@@ -76,7 +76,7 @@ if st.sidebar.button("Log out"):
     st.session_state.current_user = None
     st.rerun()
 
-nav_options = ["Tasks", "Master Stock List", "Recipes", "Suppliers"]
+nav_options = ["Tasks", "Stock Take", "Master Stock List", "Recipes", "Suppliers"]
 if is_manager:
     nav_options.append("Invoices")
     nav_options.append("Staff")
@@ -232,6 +232,84 @@ if page == "Tasks":
                 conn.close()
                 st.success("Task removed.")
                 st.rerun()
+
+
+# =========================================================
+# PAGE: STOCK TAKE
+# =========================================================
+elif page == "Stock Take":
+    st.title("Weekly stock take")
+    st.caption("Count what's actually on the shelf. Pulled live from the Master Stock List — nothing is duplicated here.")
+
+    conn = db.get_connection()
+    ingredients = conn.execute("""
+        SELECT * FROM ingredients ORDER BY category, name
+    """).fetchall()
+    conn.close()
+
+    if not ingredients:
+        st.info("No ingredients in the Master Stock List yet — add some first.")
+    else:
+        with st.form("stock_take_form"):
+            count_date = st.date_input("Stock take date", value=date.today())
+            st.write("")
+
+            categories = sorted(set(r["category"] or "Uncategorised" for r in ingredients))
+            entered_values = {}
+            for cat in categories:
+                st.markdown(f"**{cat}**")
+                cat_items = [r for r in ingredients if (r["category"] or "Uncategorised") == cat]
+                for item in cat_items:
+                    entered_values[item["id"]] = st.number_input(
+                        f"{item['name']} ({item['base_unit']})",
+                        min_value=0.0, step=1.0, key=f"count_{item['id']}_{count_date}"
+                    )
+
+            submitted = st.form_submit_button("Submit stock take")
+            if submitted:
+                conn = db.get_connection()
+                # Resubmitting the same date overwrites that date's counts, rather than duplicating them
+                conn.execute("DELETE FROM stock_takes WHERE count_date = ?", (count_date.isoformat(),))
+                for ingredient_id, qty in entered_values.items():
+                    conn.execute(
+                        "INSERT INTO stock_takes (ingredient_id, count_date, quantity_counted, counted_by) VALUES (?, ?, ?, ?)",
+                        (ingredient_id, count_date.isoformat(), qty, current_user["name"])
+                    )
+                conn.commit()
+                conn.close()
+                st.success(f"Stock take for {count_date.isoformat()} saved.")
+                st.rerun()
+
+    st.divider()
+    st.subheader("View a past stock take")
+
+    conn = db.get_connection()
+    past_dates = [r["count_date"] for r in conn.execute(
+        "SELECT DISTINCT count_date FROM stock_takes ORDER BY count_date DESC"
+    ).fetchall()]
+    conn.close()
+
+    if not past_dates:
+        st.write("No stock takes recorded yet.")
+    else:
+        chosen_date = st.selectbox("Choose a date", past_dates)
+        conn = db.get_connection()
+        history_rows = conn.execute("""
+            SELECT i.name, i.category, i.base_unit, st.quantity_counted, st.counted_by
+            FROM stock_takes st
+            JOIN ingredients i ON st.ingredient_id = i.id
+            WHERE st.count_date = ?
+            ORDER BY i.category, i.name
+        """, (chosen_date,)).fetchall()
+        conn.close()
+
+        history_data = [{
+            "Category": r["category"],
+            "Ingredient": r["name"],
+            "Quantity counted": f"{r['quantity_counted']:g}{r['base_unit']}",
+            "Counted by": r["counted_by"],
+        } for r in history_rows]
+        st.dataframe(pd.DataFrame(history_data), use_container_width=True, hide_index=True)
 
 
 # =========================================================

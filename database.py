@@ -144,6 +144,17 @@ def init_db():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS stock_takes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ingredient_id INTEGER NOT NULL,
+            count_date TEXT NOT NULL,
+            quantity_counted REAL NOT NULL,
+            counted_by TEXT,
+            FOREIGN KEY (ingredient_id) REFERENCES ingredients(id) ON DELETE CASCADE
+        )
+    """)
+
     conn.commit()
     conn.close()
 
