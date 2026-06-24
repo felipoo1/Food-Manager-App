@@ -8,7 +8,7 @@ Run it with:  streamlit run app.py
 
 import streamlit as st
 import pandas as pd
-from datetime import date
+from datetime import date, datetime
 import database as db
 
 st.set_page_config(page_title="Cafe Manager", layout="wide")
@@ -16,10 +16,70 @@ st.set_page_config(page_title="Cafe Manager", layout="wide")
 # Make sure the database and starter data exist every time the app starts
 db.init_db()
 db.seed_starter_data()
+db.seed_default_staff()
+
+# ---------- PIN login gate ----------
+# Nothing below this runs until someone enters a valid PIN.
+if "current_user" not in st.session_state:
+    st.session_state.current_user = None
+if "pending_shared_login" not in st.session_state:
+    st.session_state.pending_shared_login = False
+
+if st.session_state.current_user is None:
+    st.title("Cafe Manager")
+
+    if st.session_state.pending_shared_login:
+        st.subheader("Shop iPad — who are you?")
+        conn = db.get_connection()
+        named_staff = conn.execute(
+            "SELECT id, name, role FROM staff WHERE is_shared_device = 0 ORDER BY name"
+        ).fetchall()
+        conn.close()
+        staff_by_name = {r["name"]: r for r in named_staff}
+
+        if not staff_by_name:
+            st.info("No named staff set up yet — ask a manager to add staff first.")
+        else:
+            chosen_name = st.selectbox("Select your name", list(staff_by_name.keys()))
+            if st.button("Continue"):
+                chosen = staff_by_name[chosen_name]
+                st.session_state.current_user = {"id": chosen["id"], "name": chosen["name"], "role": chosen["role"]}
+                st.session_state.pending_shared_login = False
+                st.rerun()
+        st.stop()
+
+    else:
+        pin_entry = st.text_input("Enter your PIN", type="password", max_chars=6)
+        if st.button("Log in"):
+            conn = db.get_connection()
+            staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_entry,)).fetchone()
+            conn.close()
+            if staff_match is None:
+                st.error("PIN not recognized.")
+            elif staff_match["is_shared_device"]:
+                st.session_state.pending_shared_login = True
+                st.rerun()
+            else:
+                st.session_state.current_user = {
+                    "id": staff_match["id"], "name": staff_match["name"], "role": staff_match["role"]
+                }
+                st.rerun()
+        st.stop()
+
+current_user = st.session_state.current_user
+is_manager = current_user["role"] in ("owner", "manager")
 
 # ---------- Sidebar navigation ----------
 st.sidebar.title("Cafe Manager")
-page = st.sidebar.radio("Go to", ["Master Stock List", "Recipes", "Suppliers"])
+st.sidebar.write(f"Logged in as **{current_user['name']}** ({current_user['role']})")
+if st.sidebar.button("Log out"):
+    st.session_state.current_user = None
+    st.rerun()
+
+nav_options = ["Tasks", "Master Stock List", "Recipes", "Suppliers"]
+if is_manager:
+    nav_options.append("Staff")
+page = st.sidebar.radio("Go to", nav_options)
 
 
 def get_supplier_options():
@@ -31,6 +91,87 @@ def get_supplier_options():
     for r in rows:
         options[r["name"]] = r["id"]
     return options
+
+
+# =========================================================
+# PAGE: TASKS
+# =========================================================
+if page == "Tasks":
+    st.title("Today's tasks")
+    st.caption("Daily instructions for the kitchen and floor team.")
+
+    conn = db.get_connection()
+    all_tasks = conn.execute("SELECT * FROM tasks ORDER BY id").fetchall()
+    conn.close()
+
+    for section in ["Kitchen", "Floor"]:
+        st.subheader(section)
+        section_tasks = [t for t in all_tasks if t["section"] == section]
+        if not section_tasks:
+            st.write("No tasks yet.")
+        for t in section_tasks:
+            checked = st.checkbox(
+                t["title"], value=bool(t["done"]), key=f"task_check_{t['id']}"
+            )
+            if t["done"]:
+                st.caption(f"✅ Completed by {t['completed_by']} at {t['completed_at']}")
+
+            if checked and not t["done"]:
+                conn = db.get_connection()
+                conn.execute(
+                    "UPDATE tasks SET done=1, completed_by=?, completed_at=? WHERE id=?",
+                    (current_user["name"], datetime.now().strftime("%-I:%M %p"), t["id"])
+                )
+                conn.commit()
+                conn.close()
+                st.rerun()
+            elif not checked and t["done"]:
+                conn = db.get_connection()
+                conn.execute(
+                    "UPDATE tasks SET done=0, completed_by=NULL, completed_at=NULL WHERE id=?",
+                    (t["id"],)
+                )
+                conn.commit()
+                conn.close()
+                st.rerun()
+        st.write("")
+
+    if is_manager:
+        st.divider()
+        st.subheader("Add a new task")
+        with st.form("add_task_form", clear_on_submit=True):
+            task_title = st.text_input("Task description")
+            task_section = st.selectbox("Section", ["Kitchen", "Floor"])
+            submitted = st.form_submit_button("Add task")
+            if submitted:
+                if not task_title:
+                    st.error("Please enter a task description.")
+                else:
+                    conn = db.get_connection()
+                    conn.execute(
+                        "INSERT INTO tasks (title, section, created_by, created_at, done) VALUES (?, ?, ?, ?, 0)",
+                        (task_title, task_section, current_user["name"], date.today().isoformat())
+                    )
+                    conn.commit()
+                    conn.close()
+                    st.success("Task added.")
+                    st.rerun()
+
+        st.divider()
+        st.subheader("Remove a task")
+        conn = db.get_connection()
+        removable = conn.execute("SELECT id, title, section FROM tasks ORDER BY section, title").fetchall()
+        conn.close()
+        if removable:
+            labels = {f"[{t['section']}] {t['title']}": t["id"] for t in removable}
+            to_remove_label = st.selectbox("Choose a task to remove", list(labels.keys()))
+            if st.button("Remove task"):
+                conn = db.get_connection()
+                conn.execute("DELETE FROM tasks WHERE id = ?", (labels[to_remove_label],))
+                conn.commit()
+                conn.close()
+                st.success("Task removed.")
+                st.rerun()
 
 
 # =========================================================
@@ -565,3 +706,74 @@ elif page == "Suppliers":
                 conn.close()
                 st.success(f"Added {s_name}.")
                 st.rerun()
+
+
+# =========================================================
+# PAGE: STAFF  (managers / owner only)
+# =========================================================
+elif page == "Staff":
+    st.title("Staff & PIN logins")
+    st.caption("Manage who can log in to this app and what they can do.")
+
+    conn = db.get_connection()
+    staff_rows = conn.execute("SELECT * FROM staff ORDER BY role, name").fetchall()
+    conn.close()
+
+    table_data = []
+    for s in staff_rows:
+        table_data.append({
+            "Name": s["name"],
+            "PIN": s["pin"],
+            "Role": s["role"],
+            "Shared device?": "Yes" if s["is_shared_device"] else "No",
+        })
+    st.dataframe(pd.DataFrame(table_data), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("Add a new staff member")
+    with st.form("add_staff_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            new_name = st.text_input("Name")
+            new_pin = st.text_input("PIN (4-6 digits)", max_chars=6)
+        with col2:
+            new_role = st.selectbox("Role", ["staff", "manager", "owner"])
+            new_shared = st.checkbox("This is a shared device PIN (e.g. shop iPad)")
+
+        submitted = st.form_submit_button("Add staff member")
+        if submitted:
+            if not new_name or not new_pin:
+                st.error("Please enter a name and PIN.")
+            else:
+                conn = db.get_connection()
+                existing = conn.execute("SELECT id FROM staff WHERE pin = ?", (new_pin,)).fetchone()
+                if existing:
+                    st.error("That PIN is already in use — choose a different one.")
+                else:
+                    conn.execute(
+                        "INSERT INTO staff (name, pin, role, is_shared_device) VALUES (?, ?, ?, ?)",
+                        (new_name, new_pin, new_role, 1 if new_shared else 0)
+                    )
+                    conn.commit()
+                    st.success(f"Added {new_name}.")
+                    st.rerun()
+                conn.close()
+
+    st.divider()
+    st.subheader("Remove a staff member")
+    if staff_rows:
+        staff_labels = {f"{s['name']} ({s['role']})": s["id"] for s in staff_rows}
+        chosen_label = st.selectbox("Choose a staff member to remove", list(staff_labels.keys()))
+        if st.button("Remove staff member"):
+            chosen_id = staff_labels[chosen_label]
+            conn = db.get_connection()
+            owner_count = conn.execute("SELECT COUNT(*) AS c FROM staff WHERE role = 'owner'").fetchone()["c"]
+            target = conn.execute("SELECT role FROM staff WHERE id = ?", (chosen_id,)).fetchone()
+            if target["role"] == "owner" and owner_count <= 1:
+                st.error("Can't remove the only owner account. Add another owner/manager first.")
+            else:
+                conn.execute("DELETE FROM staff WHERE id = ?", (chosen_id,))
+                conn.commit()
+                st.success("Removed.")
+                st.rerun()
+            conn.close()

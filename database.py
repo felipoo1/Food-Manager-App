@@ -83,6 +83,54 @@ def init_db():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS staff (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            pin TEXT NOT NULL UNIQUE,
+            role TEXT NOT NULL,            -- 'owner', 'manager', or 'staff'
+            is_shared_device INTEGER DEFAULT 0   -- 1 for the shop iPad's shared PIN
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            section TEXT NOT NULL,         -- 'Kitchen' or 'Floor'
+            created_by TEXT,
+            created_at TEXT,
+            done INTEGER DEFAULT 0,
+            completed_by TEXT,
+            completed_at TEXT
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+def seed_default_staff():
+    """
+    Creates one default Owner PIN and one shared 'Shop iPad' PIN, but only
+    if the staff table is currently empty. Safe to call every time the app
+    starts -- won't touch real staff you've already added.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT COUNT(*) AS c FROM staff")
+    if cur.fetchone()["c"] > 0:
+        conn.close()
+        return
+
+    cur.execute(
+        "INSERT INTO staff (name, pin, role, is_shared_device) VALUES (?, ?, ?, ?)",
+        ("Owner", "0000", "owner", 0)
+    )
+    cur.execute(
+        "INSERT INTO staff (name, pin, role, is_shared_device) VALUES (?, ?, ?, ?)",
+        ("Shop iPad", "9999", "staff", 1)
+    )
     conn.commit()
     conn.close()
 
