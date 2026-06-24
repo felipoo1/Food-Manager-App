@@ -78,6 +78,7 @@ if st.sidebar.button("Log out"):
 
 nav_options = ["Tasks", "Master Stock List", "Recipes", "Suppliers"]
 if is_manager:
+    nav_options.append("Invoices")
     nav_options.append("Staff")
 page = st.sidebar.radio("Go to", nav_options)
 
@@ -777,3 +778,208 @@ elif page == "Staff":
                 st.success("Removed.")
                 st.rerun()
             conn.close()
+
+
+# =========================================================
+# PAGE: INVOICES  (managers / owner only)
+# =========================================================
+elif page == "Invoices":
+    st.title("Invoice scanning")
+    st.caption("Upload a photo of a supplier invoice. Small price changes (under 10%) are pre-approved; bigger changes need your tick before applying.")
+
+    if "ANTHROPIC_API_KEY" not in st.secrets:
+        st.warning(
+            "No API key found yet. Add `ANTHROPIC_API_KEY` under this app's "
+            "Settings → Secrets on Streamlit Community Cloud, then refresh this page."
+        )
+    else:
+        uploaded_file = st.file_uploader("Upload invoice photo", type=["png", "jpg", "jpeg"])
+
+        if uploaded_file is not None:
+            st.image(uploaded_file, width=300)
+
+            if st.button("Scan invoice"):
+                import anthropic
+                import base64
+                import json
+
+                with st.spinner("Reading the invoice..."):
+                    try:
+                        client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+                        image_bytes = uploaded_file.getvalue()
+                        b64_data = base64.b64encode(image_bytes).decode("utf-8")
+                        media_type = uploaded_file.type or "image/jpeg"
+
+                        response = client.messages.create(
+                            model="claude-haiku-4-5-20251001",
+                            max_tokens=1024,
+                            system=(
+                                "You extract structured data from supplier invoice photos for a cafe's "
+                                "stock system. Respond with ONLY valid JSON, no preamble, no markdown "
+                                "code fences, no extra commentary."
+                            ),
+                            messages=[{
+                                "role": "user",
+                                "content": [
+                                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64_data}},
+                                    {"type": "text", "text": (
+                                        "Extract the supplier name, invoice date, and every line item from this "
+                                        "invoice. For each line item give: description, pack size (if shown), "
+                                        "and price. Respond as JSON exactly in this shape: "
+                                        '{"supplier_name": "", "invoice_date": "", "line_items": '
+                                        '[{"description": "", "pack_size": "", "price": 0.0}]}'
+                                    )}
+                                ]
+                            }]
+                        )
+
+                        raw_text = response.content[0].text.strip()
+                        raw_text = raw_text.replace("```json", "").replace("```", "").strip()
+                        parsed = json.loads(raw_text)
+
+                        conn = db.get_connection()
+                        ingredient_rows = conn.execute("SELECT * FROM ingredients").fetchall()
+                        supplier_rows = conn.execute("SELECT name FROM suppliers").fetchall()
+                        conn.close()
+
+                        ingredient_names = [r["name"] for r in ingredient_rows]
+                        ingredient_by_name = {r["name"]: r for r in ingredient_rows}
+                        supplier_names = [r["name"] for r in supplier_rows]
+
+                        matched_supplier, _ = db.find_best_match(parsed.get("supplier_name", ""), supplier_names)
+
+                        review_rows = []
+                        for item in parsed.get("line_items", []):
+                            description = item.get("description", "")
+                            new_price = float(item.get("price", 0) or 0)
+                            match_name, score = db.find_best_match(description, ingredient_names)
+
+                            if match_name:
+                                old_price = ingredient_by_name[match_name]["purchase_price"] or 0
+                                pct_change = ((new_price - old_price) / old_price * 100) if old_price else None
+                                status = "unmatched"
+                                if pct_change is not None:
+                                    status = "alert" if abs(pct_change) >= 10 else "auto"
+                            else:
+                                old_price, pct_change, status = None, None, "unmatched"
+
+                            review_rows.append({
+                                "description": description,
+                                "pack_size": item.get("pack_size", ""),
+                                "new_price": new_price,
+                                "matched_ingredient": match_name,
+                                "old_price": old_price,
+                                "pct_change": pct_change,
+                                "status": status,
+                            })
+
+                        st.session_state.invoice_scan = {
+                            "supplier_input": parsed.get("supplier_name", ""),
+                            "supplier_matched": matched_supplier,
+                            "invoice_date": parsed.get("invoice_date", ""),
+                            "rows": review_rows,
+                        }
+                        st.rerun()
+
+                    except json.JSONDecodeError:
+                        st.error("Couldn't read structured data from that photo. Try a clearer, well-lit photo of the invoice.")
+                    except Exception as e:
+                        st.error(f"Something went wrong while scanning: {e}")
+
+    # ---------- Review screen (built from the last scan, if any) ----------
+    if "invoice_scan" in st.session_state:
+        scan = st.session_state.invoice_scan
+        st.divider()
+        st.subheader("Review extracted invoice")
+
+        if scan["supplier_matched"]:
+            st.write(f"**Supplier:** {scan['supplier_input']} → matched to existing supplier **{scan['supplier_matched']}**")
+        else:
+            st.write(f"**Supplier:** {scan['supplier_input']} — ⚠️ not matched to an existing supplier (add manually on the Suppliers page if needed)")
+        st.write(f"**Invoice date (as read):** {scan['invoice_date'] or 'not detected'}")
+
+        conn = db.get_connection()
+        all_ingredient_names = [r["name"] for r in conn.execute("SELECT name FROM ingredients").fetchall()]
+        conn.close()
+
+        for idx, row in enumerate(scan["rows"]):
+            st.markdown("---")
+            cols = st.columns([3, 2, 2])
+            cols[0].write(f"**{row['description']}**  \n{row['pack_size']}")
+            cols[1].write(f"Invoice price: ${row['new_price']:.2f}")
+
+            if row["status"] == "unmatched":
+                cols[2].write("🔴 No confident match")
+                choice_options = ["-- skip this item --"] + all_ingredient_names
+                st.selectbox(
+                    "Match to an ingredient (or skip)",
+                    choice_options,
+                    key=f"inv_match_choice_{idx}"
+                )
+            else:
+                badge = "🟡 Needs review" if row["status"] == "alert" else "🟢 Small change — pre-approved"
+                cols[2].write(
+                    f"{badge}  \nMatched: **{row['matched_ingredient']}**  \n"
+                    f"${row['old_price']:.2f} → ${row['new_price']:.2f} ({row['pct_change']:+.1f}%)"
+                )
+                st.checkbox(
+                    f"Apply this price update to {row['matched_ingredient']}",
+                    value=(row["status"] == "auto"),
+                    key=f"inv_apply_{idx}"
+                )
+
+        st.markdown("---")
+        if st.button("Apply confirmed changes"):
+            applied_count = 0
+            conn = db.get_connection()
+            for idx, row in enumerate(scan["rows"]):
+                if row["status"] == "unmatched":
+                    chosen = st.session_state.get(f"inv_match_choice_{idx}")
+                    if chosen and chosen != "-- skip this item --":
+                        old = conn.execute("SELECT purchase_price FROM ingredients WHERE name = ?", (chosen,)).fetchone()
+                        old_price = old["purchase_price"] if old else None
+                        conn.execute(
+                            "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
+                            (row["new_price"], date.today().isoformat(), chosen)
+                        )
+                        conn.execute(
+                            "INSERT INTO invoice_log (scanned_at, supplier_name, ingredient_name, old_price, new_price, pct_change, applied_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (date.today().isoformat(), scan["supplier_matched"] or scan["supplier_input"], chosen,
+                             old_price, row["new_price"], None, current_user["name"])
+                        )
+                        applied_count += 1
+                else:
+                    if st.session_state.get(f"inv_apply_{idx}"):
+                        conn.execute(
+                            "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
+                            (row["new_price"], date.today().isoformat(), row["matched_ingredient"])
+                        )
+                        conn.execute(
+                            "INSERT INTO invoice_log (scanned_at, supplier_name, ingredient_name, old_price, new_price, pct_change, applied_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (date.today().isoformat(), scan["supplier_matched"] or scan["supplier_input"], row["matched_ingredient"],
+                             row["old_price"], row["new_price"], row["pct_change"], current_user["name"])
+                        )
+                        applied_count += 1
+            conn.commit()
+            conn.close()
+            st.success(f"Applied {applied_count} price update(s).")
+            del st.session_state.invoice_scan
+            st.rerun()
+
+    st.divider()
+    st.subheader("Recent price changes from invoices")
+    conn = db.get_connection()
+    log_rows = conn.execute("SELECT * FROM invoice_log ORDER BY id DESC LIMIT 20").fetchall()
+    conn.close()
+    if log_rows:
+        log_data = [{
+            "Date": r["scanned_at"],
+            "Supplier": r["supplier_name"],
+            "Ingredient": r["ingredient_name"],
+            "Old price": f"${r['old_price']:.2f}" if r["old_price"] is not None else "-",
+            "New price": f"${r['new_price']:.2f}",
+            "Applied by": r["applied_by"],
+        } for r in log_rows]
+        st.dataframe(pd.DataFrame(log_data), use_container_width=True, hide_index=True)
+    else:
+        st.write("No invoice-driven price changes yet.")

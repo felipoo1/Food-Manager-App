@@ -106,8 +106,39 @@ def init_db():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS invoice_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scanned_at TEXT,
+            supplier_name TEXT,
+            ingredient_name TEXT,
+            old_price REAL,
+            new_price REAL,
+            pct_change REAL,
+            applied_by TEXT
+        )
+    """)
+
     conn.commit()
     conn.close()
+
+
+def find_best_match(target_text, candidates):
+    """
+    Fuzzy-matches a piece of text (e.g. an invoice line item description)
+    against a list of known names (e.g. your ingredient names), using
+    Python's built-in difflib -- no extra packages needed.
+    Returns (best_match_name, score) or (None, 0) if nothing is close enough.
+    """
+    import difflib
+    if not target_text or not candidates:
+        return None, 0.0
+    matches = difflib.get_close_matches(target_text, candidates, n=1, cutoff=0.4)
+    if not matches:
+        return None, 0.0
+    best = matches[0]
+    score = difflib.SequenceMatcher(None, target_text.lower(), best.lower()).ratio()
+    return best, score
 
 
 def seed_default_staff():
