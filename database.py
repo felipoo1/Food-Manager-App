@@ -59,8 +59,86 @@ def init_db():
         )
     """)
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS recipes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,        -- 'Prep', 'Dish', or 'Beverage'
+            yield_qty REAL,            -- only used for Prep, e.g. 500
+            yield_unit TEXT,           -- only used for Prep, e.g. 'ml'
+            selling_price REAL         -- only used for Dish / Beverage
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS recipe_lines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_recipe_id INTEGER NOT NULL,
+            ingredient_id INTEGER,     -- set if this line is a raw ingredient
+            sub_recipe_id INTEGER,     -- set if this line is a nested Prep recipe
+            quantity REAL NOT NULL,    -- amount used, in the component's base/yield unit
+            FOREIGN KEY (parent_recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+            FOREIGN KEY (ingredient_id) REFERENCES ingredients(id),
+            FOREIGN KEY (sub_recipe_id) REFERENCES recipes(id)
+        )
+    """)
+
     conn.commit()
     conn.close()
+
+
+def compute_recipe_cost(recipe_id, conn=None, _visited=None):
+    """
+    Recursively calculates the total cost of a recipe by walking through
+    every ingredient line and every nested Prep-recipe line.
+
+    This is the engine behind "Prep cost automatically flows into Dish cost."
+    """
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+    if _visited is None:
+        _visited = set()
+
+    if recipe_id in _visited:
+        # Safety net: prevents an infinite loop if a recipe somehow
+        # references itself through a chain of Preps.
+        if owns_conn:
+            conn.close()
+        return 0.0
+    _visited.add(recipe_id)
+
+    total = 0.0
+    lines = conn.execute("SELECT * FROM recipe_lines WHERE parent_recipe_id = ?", (recipe_id,)).fetchall()
+
+    for line in lines:
+        if line["ingredient_id"] is not None:
+            ing = conn.execute("SELECT * FROM ingredients WHERE id = ?", (line["ingredient_id"],)).fetchone()
+            if ing and ing["purchase_qty"]:
+                cost_per_base_unit = ing["purchase_price"] / ing["purchase_qty"]
+                total += cost_per_base_unit * line["quantity"]
+
+        elif line["sub_recipe_id"] is not None:
+            sub_recipe = conn.execute("SELECT * FROM recipes WHERE id = ?", (line["sub_recipe_id"],)).fetchone()
+            if sub_recipe and sub_recipe["yield_qty"]:
+                sub_total_cost = compute_recipe_cost(line["sub_recipe_id"], conn, _visited)
+                cost_per_base_unit = sub_total_cost / sub_recipe["yield_qty"]
+                total += cost_per_base_unit * line["quantity"]
+
+    if owns_conn:
+        conn.close()
+    return total
+
+
+def food_cost_status(food_cost_pct):
+    """Returns 'ok', 'warning', or 'alert' based on the 25% target / 30% alert thresholds."""
+    if food_cost_pct is None:
+        return None
+    if food_cost_pct >= 30:
+        return "alert"
+    if food_cost_pct > 25:
+        return "warning"
+    return "ok"
 
 
 def cost_per_recipe_unit(ingredient_row):
