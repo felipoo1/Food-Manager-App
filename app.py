@@ -1277,7 +1277,7 @@ elif page == "Task History":
     st.caption("Every task completion, who did it, and when — across all days and weeks.")
 
     conn = db.get_connection()
-    staff_names = ["All staff"] + [r["name"] for r in conn.execute("SELECT DISTINCT completed_by FROM task_log WHERE completed_by IS NOT NULL ORDER BY completed_by").fetchall()]
+    staff_names = ["All staff"] + [r["completed_by"] for r in conn.execute("SELECT DISTINCT completed_by FROM task_log WHERE completed_by IS NOT NULL ORDER BY completed_by").fetchall()]
     conn.close()
 
     chosen_staff = st.selectbox("Filter by staff member", staff_names)

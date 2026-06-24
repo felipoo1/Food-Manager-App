@@ -140,9 +140,22 @@ def init_db():
             week_start_date TEXT,          -- Monday's date of the week it was completed (weekly tasks)
             completed_by TEXT,
             completed_at TEXT,
+            reverted INTEGER DEFAULT 0,    -- 1 if this completion was later undone
+            reverted_by TEXT,
+            reverted_at TEXT,
             FOREIGN KEY (task_id) REFERENCES task_definitions(id) ON DELETE CASCADE
         )
     """)
+
+    # Migration safety net: adds the revert-tracking columns to task_log if this
+    # database was created before they existed. Safe to run every time the app starts.
+    existing_cols = [r[1] for r in cur.execute("PRAGMA table_info(task_log)").fetchall()]
+    if "reverted" not in existing_cols:
+        cur.execute("ALTER TABLE task_log ADD COLUMN reverted INTEGER DEFAULT 0")
+    if "reverted_by" not in existing_cols:
+        cur.execute("ALTER TABLE task_log ADD COLUMN reverted_by TEXT")
+    if "reverted_at" not in existing_cols:
+        cur.execute("ALTER TABLE task_log ADD COLUMN reverted_at TEXT")
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS stock_takes (
@@ -266,10 +279,13 @@ def get_week_start(d=None):
 
 def get_task_completion(task, conn=None):
     """
-    Checks whether a task is currently 'done':
-    - 'weekly' tasks reset automatically each week (checks for a log entry in the CURRENT week)
-    - 'once' tasks stay done forever once completed (checks for any log entry at all)
-    Returns (is_done, completed_by, completed_at) or (False, None, None).
+    Checks whether a task is currently 'done', looking at the MOST RECENT log
+    entry only:
+    - 'weekly' tasks reset automatically each week (checks the current week only)
+    - 'once' tasks stay done forever once completed
+    - if the most recent entry was reverted (undone), the task counts as not-done,
+      but the entry itself stays in task_log for the history view.
+    Returns (is_done, completed_by, completed_at, log_id) or (False, None, None, None).
     """
     owns_conn = conn is None
     if owns_conn:
@@ -289,9 +305,9 @@ def get_task_completion(task, conn=None):
     if owns_conn:
         conn.close()
 
-    if row:
-        return True, row["completed_by"], row["completed_at"]
-    return False, None, None
+    if row and not row["reverted"]:
+        return True, row["completed_by"], row["completed_at"], row["id"]
+    return False, None, None, None
 
 
 def cost_per_recipe_unit(ingredient_row):
