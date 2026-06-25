@@ -99,6 +99,22 @@ class _ConnWrapper:
             self._returned = True
 
 
+@st.cache_data(ttl=30)
+def get_cached_ingredients_basic():
+    """
+    A lightweight, cached version of 'all ingredients (id, name, unit)' --
+    used for dropdowns that don't need to be byte-fresh on every single
+    click. Cuts down on repeated round-trips to Supabase, which is what was
+    making actions like adding/removing a recipe line feel slow. Cache
+    clears automatically after 30 seconds, or immediately after any
+    ingredient is added/edited/removed (see calls to .clear() in app.py).
+    """
+    conn = get_connection()
+    rows = conn.execute("SELECT id, name, base_unit FROM ingredients ORDER BY name").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def get_connection():
     """Borrows a connection from the pool (instead of opening a new one each time)."""
     pool = _get_pool()
@@ -466,6 +482,61 @@ def get_week_start(d=None):
         d = date.today()
     monday = d - timedelta(days=d.weekday())
     return monday.isoformat()
+
+
+def get_task_completions_batch(tasks, conn=None):
+    """
+    Same logic as get_task_completion, but for a whole list of tasks at once
+    using a SINGLE database query instead of one query per task. This is
+    what the Tasks page uses to render the weekly list -- with N tasks, the
+    old approach made N round-trips to the database just to check who'd
+    completed what; this makes one.
+    Returns {task_id: (is_done, completed_by, completed_at, log_id)}.
+    """
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+
+    task_ids = [t["id"] for t in tasks]
+    if not task_ids:
+        if owns_conn:
+            conn.close()
+        return {}
+
+    placeholders = ",".join("?" * len(task_ids))
+    all_logs = conn.execute(
+        f"SELECT * FROM task_log WHERE task_id IN ({placeholders}) ORDER BY id DESC",
+        task_ids
+    ).fetchall()
+
+    if owns_conn:
+        conn.close()
+
+    # Group log rows by task_id, newest first (since we ordered by id DESC)
+    logs_by_task = {}
+    for row in all_logs:
+        logs_by_task.setdefault(row["task_id"], []).append(row)
+
+    current_week = get_week_start()
+    results = {}
+    for t in tasks:
+        rows_for_task = logs_by_task.get(t["id"], [])
+        match = None
+        if t["recurrence"] == "weekly":
+            for row in rows_for_task:
+                if row["week_start_date"] == current_week:
+                    match = row
+                    break  # first match is the newest, since list is id DESC
+        else:
+            if rows_for_task:
+                match = rows_for_task[0]
+
+        if match and not match["reverted"]:
+            results[t["id"]] = (True, match["completed_by"], match["completed_at"], match["id"])
+        else:
+            results[t["id"]] = (False, None, None, None)
+
+    return results
 
 
 def get_task_completion(task, conn=None):

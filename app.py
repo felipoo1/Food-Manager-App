@@ -82,8 +82,17 @@ is_owner = current_user["role"] == "owner"
 # Streamlit's theme settings don't expose per-element text alignment or font
 # weight, so this small CSS block fills that one gap. It only targets the
 # sidebar nav buttons/text, nothing else in the app.
+# Note: buttons center their content via a flex container, not just text-align
+# on the inner <p> -- targeting only the <p> (as before) wasn't enough.
 st.markdown("""
 <style>
+[data-testid="stSidebar"] button {
+    justify-content: flex-start !important;
+}
+[data-testid="stSidebar"] button div {
+    justify-content: flex-start !important;
+    text-align: left !important;
+}
 [data-testid="stSidebar"] button p {
     text-align: left !important;
     font-size: 1.05rem !important;
@@ -159,23 +168,15 @@ if page == "Tasks":
     if "task_mode" not in st.session_state:
         st.session_state.task_mode = "list"
     if not is_owner:
-        st.session_state.task_mode = "list"  # safety: only the owner can reach add/edit/remove
+        st.session_state.task_mode = "list"  # safety: only the owner can reach add/edit
 
     if is_owner:
-        title_col, btn1, btn2, btn3 = st.columns([4, 2, 2, 2])
+        title_col, btn1 = st.columns([7, 2])
         with title_col:
             st.title("Weekly task workspace")
         with btn1:
-            if st.button("+ Add New Task", icon=":material/add:", type="primary", use_container_width=True):
+            if st.button("Add New Task", type="primary", use_container_width=True):
                 st.session_state.task_mode = "add"
-                st.rerun()
-        with btn2:
-            if st.button("Edit Task", use_container_width=True):
-                st.session_state.task_mode = "edit"
-                st.rerun()
-        with btn3:
-            if st.button("Remove Task", use_container_width=True):
-                st.session_state.task_mode = "remove"
                 st.rerun()
 
         if st.session_state.task_mode != "list":
@@ -188,10 +189,12 @@ if page == "Tasks":
 
     # ---------------- LIST VIEW ----------------
     if st.session_state.task_mode == "list":
-        st.caption("Weekly recurring tasks reset every Monday. One-off tasks stay completed once ticked.")
+        st.caption("Weekly recurring tasks reset every Monday. One-off tasks stay completed once ticked. Click a task to edit it.")
 
         conn = db.get_connection()
         all_task_defs = conn.execute("SELECT * FROM task_definitions ORDER BY section, title").fetchall()
+        # One single query for every task's completion status, instead of one query per task.
+        completions = db.get_task_completions_batch(all_task_defs, conn)
         conn.close()
 
         if "pending_pin_task" not in st.session_state:
@@ -212,13 +215,19 @@ if page == "Tasks":
                     conn = db.get_connection()
                     for t in section_tasks:
                         pending_key = f"{t['id']}-pending"
-                        is_done, completed_by, completed_at, log_id = db.get_task_completion(t, conn)
+                        is_done, completed_by, completed_at, log_id = completions[t["id"]]
 
                         row_cols = st.columns([5, 2])
                         with row_cols[0]:
                             title_col, badge_col = st.columns([5, 2])
                             with title_col:
-                                st.write(t["title"])
+                                if is_owner:
+                                    if st.button(t["title"], type="tertiary", key=f"task_title_{t['id']}"):
+                                        st.session_state["edit_task_select"] = f"[{t['day_of_week']} / {t['section']}] {t['title']}"
+                                        st.session_state.task_mode = "edit"
+                                        st.rerun()
+                                else:
+                                    st.write(t["title"])
                             with badge_col:
                                 if t["recurrence"] == "once":
                                     st.badge(f"One-off: {t['specific_date']}", color="gray")
@@ -266,7 +275,7 @@ if page == "Tasks":
                     conn.close()
             st.write("")
 
-    # ---------------- ADD VIEW (manager only) ----------------
+    # ---------------- ADD VIEW (owner only) ----------------
     elif st.session_state.task_mode == "add":
         st.subheader("Add a new task")
         with st.form("add_task_form", clear_on_submit=True):
@@ -306,9 +315,9 @@ if page == "Tasks":
                     st.session_state.task_mode = "list"
                     st.rerun()
 
-    # ---------------- EDIT VIEW (manager only) ----------------
+    # ---------------- EDIT VIEW (Update + Delete both live here) ----------------
     elif st.session_state.task_mode == "edit":
-        st.subheader("Edit an existing task")
+        st.subheader("Edit task")
 
         conn = db.get_connection()
         all_defs = conn.execute("SELECT * FROM task_definitions ORDER BY day_of_week, section, title").fetchall()
@@ -318,7 +327,7 @@ if page == "Tasks":
             st.info("No tasks to edit yet.")
         else:
             labels = {f"[{t['day_of_week']} / {t['section']}] {t['title']}": t["id"] for t in all_defs}
-            chosen_label = st.selectbox("Choose a task", list(labels.keys()), key="edit_task_select")
+            chosen_label = st.selectbox("Task", list(labels.keys()), key="edit_task_select")
             chosen_id = labels[chosen_label]
             current = next(t for t in all_defs if t["id"] == chosen_id)
 
@@ -363,23 +372,12 @@ if page == "Tasks":
                         st.session_state.task_mode = "list"
                         st.rerun()
 
-    # ---------------- REMOVE VIEW (manager only) ----------------
-    elif st.session_state.task_mode == "remove":
-        st.subheader("Remove a task")
-        conn = db.get_connection()
-        removable = conn.execute("SELECT id, title, section, day_of_week FROM task_definitions ORDER BY day_of_week, section, title").fetchall()
-        conn.close()
-
-        if not removable:
-            st.info("No tasks to remove yet.")
-        else:
-            labels = {f"[{t['day_of_week']} / {t['section']}] {t['title']}": t["id"] for t in removable}
-            to_remove_label = st.selectbox("Choose a task to remove", list(labels.keys()), key="remove_task_select")
-
-            st.warning(f"This will permanently delete **{to_remove_label}** and its full completion history.")
-            if st.button("Confirm delete", type="primary"):
+            st.write("")
+            st.write("**Delete this task**")
+            st.caption("This will also permanently delete its full completion history.")
+            if st.button("Delete this task", key=f"delete_task_{chosen_id}"):
                 conn = db.get_connection()
-                conn.execute("DELETE FROM task_definitions WHERE id = ?", (labels[to_remove_label],))
+                conn.execute("DELETE FROM task_definitions WHERE id = ?", (chosen_id,))
                 conn.commit()
                 conn.close()
                 st.success("Task removed.")
@@ -472,20 +470,12 @@ if page == "Master Stock List":
     if "stock_mode" not in st.session_state:
         st.session_state.stock_mode = "list"
 
-    title_col, btn1, btn2, btn3 = st.columns([4, 2, 2, 2])
+    title_col, btn1 = st.columns([7, 2])
     with title_col:
         st.title("Master stock list")
     with btn1:
-        if st.button("+ Add New Ingredient", icon=":material/add:", type="primary", use_container_width=True):
+        if st.button("Add New Ingredient", type="primary", use_container_width=True):
             st.session_state.stock_mode = "add"
-            st.rerun()
-    with btn2:
-        if st.button("Edit Ingredient", use_container_width=True):
-            st.session_state.stock_mode = "edit"
-            st.rerun()
-    with btn3:
-        if st.button("Remove Ingredient", use_container_width=True):
-            st.session_state.stock_mode = "remove"
             st.rerun()
 
     if st.session_state.stock_mode != "list":
@@ -496,7 +486,7 @@ if page == "Master Stock List":
 
     # ---------------- LIST VIEW ----------------
     if st.session_state.stock_mode == "list":
-        st.caption("Every raw ingredient, its current price, and its cost per recipe unit.")
+        st.caption("Every raw ingredient, its current price, and its cost per recipe unit. Click a name to edit it.")
 
         conn = db.get_connection()
         ingredients = conn.execute("""
@@ -509,27 +499,31 @@ if page == "Master Stock List":
         conn.close()
 
         if not ingredients:
-            st.info("No ingredients yet. Click \"+ Add New Ingredient\" above to add your first one.")
+            st.info("No ingredients yet. Click \"Add New Ingredient\" above to add your first one.")
         else:
             categories = sorted(set(r["category"] or "Uncategorised" for r in ingredients))
             for cat in categories:
                 st.subheader(cat)
                 cat_rows = [r for r in ingredients if (r["category"] or "Uncategorised") == cat]
 
-                table_data = []
+                header_cols = st.columns([2, 2, 2, 2, 2, 2])
+                for h, label in zip(header_cols, ["Ingredient", "Primary supplier", "Purchase size", "Price (incl. GST)", "Recipe unit", "Cost / unit"]):
+                    h.caption(label)
+
                 for r in cat_rows:
                     cost = db.cost_per_recipe_unit(r)
-                    table_data.append({
-                        "Ingredient": r["name"],
-                        "Primary supplier": r["primary_supplier_name"] or "-",
-                        "Backup supplier": r["backup_supplier_name"] or "-",
-                        "Purchase size": r["purchase_size_label"],
-                        "Price (incl. GST)": f"${r['purchase_price']:.2f}",
-                        "Recipe unit": f"{r['recipe_unit_qty']:g}{r['base_unit']}",
-                        "Cost / unit": f"${cost:.3f}",
-                        "Updated": r["last_updated"],
-                    })
-                st.dataframe(pd.DataFrame(table_data), use_container_width=True, hide_index=True)
+                    cols = st.columns([2, 2, 2, 2, 2, 2])
+                    with cols[0]:
+                        if st.button(r["name"], type="tertiary", key=f"ing_name_{r['id']}"):
+                            st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
+                            st.session_state.stock_mode = "edit"
+                            st.rerun()
+                    cols[1].write(r["primary_supplier_name"] or "-")
+                    cols[2].write(r["purchase_size_label"])
+                    cols[3].write(f"${r['purchase_price']:.2f}")
+                    cols[4].write(f"{r['recipe_unit_qty']:g}{r['base_unit']}")
+                    cols[5].write(f"${cost:.3f}")
+            st.caption("(Updated dates shown on the ingredient's own page.)")
 
     # ---------------- ADD VIEW ----------------
     elif st.session_state.stock_mode == "add":
@@ -579,13 +573,14 @@ if page == "Master Stock List":
                     ))
                     conn.commit()
                     conn.close()
+                    db.get_cached_ingredients_basic.clear()
                     st.success(f"Added {name} to the master stock list.")
                     st.session_state.stock_mode = "list"
                     st.rerun()
 
-    # ---------------- EDIT VIEW ----------------
+    # ---------------- EDIT VIEW (Update + Delete both live here) ----------------
     elif st.session_state.stock_mode == "edit":
-        st.subheader("Edit an existing ingredient")
+        st.subheader("Edit ingredient")
 
         conn = db.get_connection()
         all_ingredients = conn.execute("SELECT * FROM ingredients ORDER BY name").fetchall()
@@ -595,7 +590,7 @@ if page == "Master Stock List":
             st.info("No ingredients to edit yet.")
         else:
             ingredient_labels = {f"{r['name']} ({r['purchase_size_label']})": r["id"] for r in all_ingredients}
-            selected_label = st.selectbox("Choose an ingredient", list(ingredient_labels.keys()), key="edit_ingredient_select")
+            selected_label = st.selectbox("Ingredient", list(ingredient_labels.keys()), key="edit_ingredient_select")
             selected_id = ingredient_labels[selected_label]
 
             conn = db.get_connection()
@@ -673,34 +668,36 @@ if page == "Master Stock List":
                         ))
                         conn.commit()
                         conn.close()
+                        db.get_cached_ingredients_basic.clear()
                         st.success(f"Updated {e_name}.")
                         st.session_state.stock_mode = "list"
                         st.rerun()
 
-    # ---------------- REMOVE VIEW ----------------
-    elif st.session_state.stock_mode == "remove":
-        st.subheader("Remove an ingredient")
+            st.write("")
+            st.write("**Delete this ingredient**")
+            conn = db.get_connection()
+            used_in_recipes = conn.execute(
+                "SELECT COUNT(*) AS c FROM recipe_lines WHERE ingredient_id = ?", (selected_id,)
+            ).fetchone()["c"]
+            used_in_stock_takes = conn.execute(
+                "SELECT COUNT(*) AS c FROM stock_takes WHERE ingredient_id = ?", (selected_id,)
+            ).fetchone()["c"]
+            conn.close()
 
-        conn = db.get_connection()
-        all_ingredients = conn.execute("SELECT * FROM ingredients ORDER BY name").fetchall()
-        conn.close()
-
-        if not all_ingredients:
-            st.info("No ingredients to remove yet.")
-        else:
-            ingredient_labels = {f"{r['name']} ({r['purchase_size_label']})": r["id"] for r in all_ingredients}
-            remove_label = st.selectbox("Choose an ingredient to remove", list(ingredient_labels.keys()), key="remove_ingredient_select")
-            remove_id = ingredient_labels[remove_label]
-
-            st.warning(f"This will permanently delete **{remove_label}** from the Master Stock List.")
-            if st.button("Confirm delete", type="primary"):
-                conn = db.get_connection()
-                conn.execute("DELETE FROM ingredients WHERE id=?", (remove_id,))
-                conn.commit()
-                conn.close()
-                st.success(f"Deleted {remove_label}.")
-                st.session_state.stock_mode = "list"
-                st.rerun()
+            if used_in_recipes > 0:
+                st.error(f"Can't delete — this ingredient is used in {used_in_recipes} recipe line(s). Remove it from those recipes first.")
+            else:
+                if used_in_stock_takes > 0:
+                    st.caption(f"Note: this ingredient has {used_in_stock_takes} past stock take record(s), which will also be removed.")
+                if st.button("Delete this ingredient", key=f"delete_ing_{selected_id}"):
+                    conn = db.get_connection()
+                    conn.execute("DELETE FROM ingredients WHERE id=?", (selected_id,))
+                    conn.commit()
+                    conn.close()
+                    db.get_cached_ingredients_basic.clear()
+                    st.success(f"Deleted {current['name']}.")
+                    st.session_state.stock_mode = "list"
+                    st.rerun()
 
 
 # =========================================================
@@ -749,7 +746,7 @@ elif page == "Recipes":
 
     if st.session_state.recipe_mode != "categories":
         if st.button("← Back"):
-            if st.session_state.recipe_mode in ("add_recipe", "edit_recipe", "remove_recipe", "edit_category", "remove_category"):
+            if st.session_state.recipe_mode in ("add_recipe", "edit_recipe", "edit_category", "remove_category"):
                 st.session_state.recipe_mode = "category_detail"
             else:
                 st.session_state.recipe_mode = "categories"
@@ -765,7 +762,7 @@ elif page == "Recipes":
             with tab:
                 top_col1, top_col2 = st.columns([8, 3])
                 with top_col2:
-                    if st.button("+ New Category", icon=":material/add:", type="primary", use_container_width=True, key=f"newcat_{rtype}"):
+                    if st.button("New Category", type="primary", use_container_width=True, key=f"newcat_{rtype}"):
                         st.session_state.recipe_active_type = rtype
                         st.session_state.recipe_mode = "add_category"
                         st.rerun()
@@ -856,7 +853,7 @@ elif page == "Recipes":
             st.subheader(category["name"])
             st.caption(f"{rtype} category")
         with head_col2:
-            if st.button("+ Add New Recipe", icon=":material/add:", type="primary", use_container_width=True):
+            if st.button("Add New Recipe", type="primary", use_container_width=True):
                 st.session_state.recipe_mode = "add_recipe"
                 st.rerun()
         with head_col3:
@@ -1212,105 +1209,93 @@ elif page == "Recipes":
 
             component_type = st.radio("Component type", component_type_choices, horizontal=True, key=f"comp_type_{selected_recipe_id}")
 
-            with st.form(f"add_line_form_{selected_recipe_id}", clear_on_submit=True):
-                if component_type == "Raw ingredient":
+            if component_type == "Raw ingredient":
+                ing_rows = db.get_cached_ingredients_basic()
+                ing_labels = {f"{r['name']} ({r['base_unit']})": (r["id"], r["base_unit"]) for r in ing_rows}
+                if ing_labels:
+                    chosen_label = st.selectbox(
+                        "Ingredient", list(ing_labels.keys()),
+                        key=f"add_line_ingredient_{selected_recipe_id}"
+                    )
+                    chosen_id, chosen_unit = ing_labels[chosen_label]
+                    qty = st.number_input(
+                        f"Quantity used ({chosen_unit})", min_value=0.0, step=1.0,
+                        key=f"add_line_qty_ingredient_{selected_recipe_id}"
+                    )
+                else:
+                    st.write("No ingredients in your Master Stock List yet.")
+                    chosen_id, qty = None, 0
+            else:
+                prep_options = recipe_options(type_filter="Prep", exclude_id=selected_recipe_id)
+                if prep_options:
+                    chosen_label = st.selectbox(
+                        "Prep recipe", list(prep_options.keys()),
+                        key=f"add_line_prep_{selected_recipe_id}"
+                    )
+                    chosen_id = prep_options[chosen_label]
                     conn = db.get_connection()
-                    ing_rows = conn.execute("SELECT id, name, base_unit FROM ingredients ORDER BY name").fetchall()
+                    prep_unit = conn.execute("SELECT yield_unit FROM recipes WHERE id = ?", (chosen_id,)).fetchone()["yield_unit"]
+                    prep_conversions = conn.execute(
+                        "SELECT DISTINCT from_unit FROM recipe_conversions WHERE recipe_id = ?", (chosen_id,)
+                    ).fetchall()
                     conn.close()
-                    ing_labels = {f"{r['name']} ({r['base_unit']})": (r["id"], r["base_unit"]) for r in ing_rows}
-                    if ing_labels:
-                        chosen_label = st.selectbox(
-                            "Ingredient", list(ing_labels.keys()),
-                            key=f"add_line_ingredient_{selected_recipe_id}"
-                        )
-                        chosen_id, chosen_unit = ing_labels[chosen_label]
-                        qty = st.number_input(
-                            f"Quantity used ({chosen_unit})", min_value=0.0, step=1.0,
-                            key=f"add_line_qty_ingredient_{selected_recipe_id}"
-                        )
-                    else:
-                        st.write("No ingredients in your Master Stock List yet.")
-                        chosen_id, qty = None, 0
+
+                    unit_options = [prep_unit] + [c["from_unit"] for c in prep_conversions]
+                    entry_unit = st.selectbox(
+                        "Enter quantity in", unit_options,
+                        key=f"add_line_prep_unit_{selected_recipe_id}"
+                    )
+                    qty_entered = st.number_input(
+                        f"Quantity used ({entry_unit})", min_value=0.0, step=1.0,
+                        key=f"add_line_qty_prep_{selected_recipe_id}"
+                    )
+                    qty = db.convert_to_base_unit(chosen_id, qty_entered, entry_unit, prep_unit)
+                    if entry_unit != prep_unit and qty_entered > 0:
+                        st.caption(f"= {qty:g}{prep_unit}")
                 else:
-                    prep_options = recipe_options(type_filter="Prep", exclude_id=selected_recipe_id)
-                    if prep_options:
-                        chosen_label = st.selectbox(
-                            "Prep recipe", list(prep_options.keys()),
-                            key=f"add_line_prep_{selected_recipe_id}"
-                        )
-                        chosen_id = prep_options[chosen_label]
-                        conn = db.get_connection()
-                        prep_unit = conn.execute("SELECT yield_unit FROM recipes WHERE id = ?", (chosen_id,)).fetchone()["yield_unit"]
-                        prep_conversions = conn.execute(
-                            "SELECT DISTINCT from_unit FROM recipe_conversions WHERE recipe_id = ?", (chosen_id,)
-                        ).fetchall()
-                        conn.close()
+                    st.write("No Prep recipes available yet.")
+                    chosen_id, qty = None, 0
 
-                        unit_options = [prep_unit] + [c["from_unit"] for c in prep_conversions]
-                        entry_unit = st.selectbox(
-                            "Enter quantity in", unit_options,
-                            key=f"add_line_prep_unit_{selected_recipe_id}"
-                        )
-                        qty_entered = st.number_input(
-                            f"Quantity used ({entry_unit})", min_value=0.0, step=1.0,
-                            key=f"add_line_qty_prep_{selected_recipe_id}"
-                        )
-                        qty = db.convert_to_base_unit(chosen_id, qty_entered, entry_unit, prep_unit)
-                        if entry_unit != prep_unit and qty_entered > 0:
-                            st.caption(f"= {qty:g}{prep_unit}")
-                    else:
-                        st.write("No Prep recipes available yet.")
-                        chosen_id, qty = None, 0
-
-                line_submitted = st.form_submit_button("Add to recipe")
-                if line_submitted:
-                    if not chosen_id or qty <= 0:
-                        st.error("Please choose a component and enter a quantity greater than zero.")
-                    else:
-                        conn = db.get_connection()
-                        if component_type == "Raw ingredient":
-                            conn.execute(
-                                "INSERT INTO recipe_lines (parent_recipe_id, ingredient_id, quantity) VALUES (?, ?, ?)",
-                                (selected_recipe_id, chosen_id, qty)
-                            )
-                        else:
-                            conn.execute(
-                                "INSERT INTO recipe_lines (parent_recipe_id, sub_recipe_id, quantity) VALUES (?, ?, ?)",
-                                (selected_recipe_id, chosen_id, qty)
-                            )
-                        conn.commit()
-                        conn.close()
-                        st.success("Added.")
-                        st.rerun()
-
-    # ======================================================
-    # REMOVE RECIPE
-    # ======================================================
-    elif st.session_state.recipe_mode == "remove_recipe":
-        st.subheader("Remove a recipe")
-
-        all_recipe_options = recipe_options()
-        if not all_recipe_options:
-            st.info("No recipes to remove yet.")
-        else:
-            remove_name = st.selectbox("Choose a recipe to remove", list(all_recipe_options.keys()), key="remove_recipe_select")
-            remove_id = all_recipe_options[remove_name]
-
-            st.warning(f"This will permanently delete **{remove_name}** and all its ingredient lines.")
-            if st.button("Confirm delete", type="primary"):
-                conn = db.get_connection()
-                used_elsewhere = conn.execute(
-                    "SELECT COUNT(*) AS c FROM recipe_lines WHERE sub_recipe_id = ?", (remove_id,)
-                ).fetchone()["c"]
-                if used_elsewhere > 0:
-                    st.error(f"Can't delete — this Prep is used in {used_elsewhere} other recipe(s). Remove it from those first.")
+            line_submitted = st.button("Add to recipe", key=f"add_line_submit_{selected_recipe_id}")
+            if line_submitted:
+                if not chosen_id or qty <= 0:
+                    st.error("Please choose a component and enter a quantity greater than zero.")
                 else:
-                    conn.execute("DELETE FROM recipes WHERE id = ?", (remove_id,))
+                    conn = db.get_connection()
+                    if component_type == "Raw ingredient":
+                        conn.execute(
+                            "INSERT INTO recipe_lines (parent_recipe_id, ingredient_id, quantity) VALUES (?, ?, ?)",
+                            (selected_recipe_id, chosen_id, qty)
+                        )
+                    else:
+                        conn.execute(
+                            "INSERT INTO recipe_lines (parent_recipe_id, sub_recipe_id, quantity) VALUES (?, ?, ?)",
+                            (selected_recipe_id, chosen_id, qty)
+                        )
                     conn.commit()
-                    st.success(f"Deleted {remove_name}.")
+                    conn.close()
+                    st.success("Added.")
+                    st.rerun()
+
+            st.write("")
+            st.write("**Delete this recipe**")
+            conn = db.get_connection()
+            used_elsewhere = conn.execute(
+                "SELECT COUNT(*) AS c FROM recipe_lines WHERE sub_recipe_id = ?", (selected_recipe_id,)
+            ).fetchone()["c"]
+            conn.close()
+
+            if used_elsewhere > 0:
+                st.error(f"Can't delete — this Prep is used in {used_elsewhere} other recipe(s). Remove it from those first.")
+            else:
+                if st.button("Delete this recipe", key=f"delete_recipe_{selected_recipe_id}"):
+                    conn = db.get_connection()
+                    conn.execute("DELETE FROM recipes WHERE id = ?", (selected_recipe_id,))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"Deleted {recipe['name']}.")
                     st.session_state.recipe_mode = "category_detail"
                     st.rerun()
-                conn.close()
 
 
 # =========================================================
@@ -1320,20 +1305,12 @@ elif page == "Suppliers":
     if "supplier_mode" not in st.session_state:
         st.session_state.supplier_mode = "list"
 
-    title_col, btn1, btn2, btn3 = st.columns([4, 2, 2, 2])
+    title_col, btn1 = st.columns([7, 2])
     with title_col:
         st.title("Suppliers")
     with btn1:
-        if st.button("+ Add New Supplier", icon=":material/add:", type="primary", use_container_width=True):
+        if st.button("Add New Supplier", type="primary", use_container_width=True):
             st.session_state.supplier_mode = "add"
-            st.rerun()
-    with btn2:
-        if st.button("Edit Supplier", use_container_width=True):
-            st.session_state.supplier_mode = "edit"
-            st.rerun()
-    with btn3:
-        if st.button("Remove Supplier", use_container_width=True):
-            st.session_state.supplier_mode = "remove"
             st.rerun()
 
     if st.session_state.supplier_mode != "list":
@@ -1344,38 +1321,29 @@ elif page == "Suppliers":
 
     # ---------------- LIST VIEW ----------------
     if st.session_state.supplier_mode == "list":
-        st.caption("Every supplier you buy from, and which ingredients link to them.")
+        st.caption("Every supplier you buy from. Click a name to view or edit its details.")
 
         conn = db.get_connection()
         suppliers = conn.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
         conn.close()
 
         if not suppliers:
-            st.info("No suppliers yet. Click \"+ Add New Supplier\" above to add your first one.")
+            st.info("No suppliers yet. Click \"Add New Supplier\" above to add your first one.")
+        else:
+            header_cols = st.columns([2, 2, 2, 2])
+            for h, label in zip(header_cols, ["Supplier", "Email", "Phone", "Payment terms"]):
+                h.caption(label)
 
-        for s in suppliers:
-            with st.expander(f"{s['name']}"):
-                st.write(f"**UEN / Tax number:** {s['uen'] or '-'}")
-                st.write(f"**Email:** {s['email'] or '-'}")
-                st.write(f"**Phone:** {s['phone'] or '-'}")
-                st.write(f"**Address:** {s['address'] or '-'}")
-                st.write(f"**Payment terms:** {s['payment_terms'] or '-'}")
-                st.write(f"**Delivery days:** {s['delivery_days'] or '-'}")
-
-                conn = db.get_connection()
-                linked = conn.execute("""
-                    SELECT name, 'Primary' AS role FROM ingredients WHERE primary_supplier_id = ?
-                    UNION ALL
-                    SELECT name, 'Backup' AS role FROM ingredients WHERE backup_supplier_id = ?
-                """, (s["id"], s["id"])).fetchall()
-                conn.close()
-
-                if linked:
-                    st.write("**Linked ingredients:**")
-                    for item in linked:
-                        st.write(f"- {item['name']} ({item['role']})")
-                else:
-                    st.write("**Linked ingredients:** none yet")
+            for s in suppliers:
+                cols = st.columns([2, 2, 2, 2])
+                with cols[0]:
+                    if st.button(s["name"], type="tertiary", key=f"supplier_name_{s['id']}"):
+                        st.session_state["edit_supplier_select"] = s["name"]
+                        st.session_state.supplier_mode = "edit"
+                        st.rerun()
+                cols[1].write(s["email"] or "-")
+                cols[2].write(s["phone"] or "-")
+                cols[3].write(s["payment_terms"] or "-")
 
     # ---------------- ADD VIEW ----------------
     elif st.session_state.supplier_mode == "add":
@@ -1409,9 +1377,9 @@ elif page == "Suppliers":
                     st.session_state.supplier_mode = "list"
                     st.rerun()
 
-    # ---------------- EDIT VIEW ----------------
+    # ---------------- EDIT VIEW (Update + Delete both live here) ----------------
     elif st.session_state.supplier_mode == "edit":
-        st.subheader("Edit an existing supplier")
+        st.subheader("Edit supplier")
 
         conn = db.get_connection()
         all_suppliers = conn.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
@@ -1421,9 +1389,24 @@ elif page == "Suppliers":
             st.info("No suppliers to edit yet.")
         else:
             supplier_labels = {r["name"]: r["id"] for r in all_suppliers}
-            chosen_label = st.selectbox("Choose a supplier", list(supplier_labels.keys()), key="edit_supplier_select")
+            chosen_label = st.selectbox("Supplier", list(supplier_labels.keys()), key="edit_supplier_select")
             chosen_id = supplier_labels[chosen_label]
             s = next(r for r in all_suppliers if r["id"] == chosen_id)
+
+            conn = db.get_connection()
+            linked = conn.execute("""
+                SELECT name, 'Primary' AS role FROM ingredients WHERE primary_supplier_id = ?
+                UNION ALL
+                SELECT name, 'Backup' AS role FROM ingredients WHERE backup_supplier_id = ?
+            """, (s["id"], s["id"])).fetchall()
+            conn.close()
+
+            if linked:
+                st.write("**Linked ingredients:**")
+                for item in linked:
+                    st.write(f"- {item['name']} ({item['role']})")
+            else:
+                st.caption("No ingredients linked to this supplier yet.")
 
             with st.form(f"edit_supplier_form_{s['id']}"):
                 col1, col2 = st.columns(2)
@@ -1454,40 +1437,19 @@ elif page == "Suppliers":
                         st.session_state.supplier_mode = "list"
                         st.rerun()
 
-    # ---------------- REMOVE VIEW ----------------
-    elif st.session_state.supplier_mode == "remove":
-        st.subheader("Remove a supplier")
-
-        conn = db.get_connection()
-        all_suppliers = conn.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
-        conn.close()
-
-        if not all_suppliers:
-            st.info("No suppliers to remove yet.")
-        else:
-            supplier_labels = {r["name"]: r["id"] for r in all_suppliers}
-            remove_label = st.selectbox("Choose a supplier to remove", list(supplier_labels.keys()), key="remove_supplier_select")
-            remove_id = supplier_labels[remove_label]
-
-            st.warning(f"This will permanently delete **{remove_label}**.")
-            if st.button("Confirm delete", type="primary"):
-                conn = db.get_connection()
-                linked_count = conn.execute("""
-                    SELECT COUNT(*) AS c FROM ingredients
-                    WHERE primary_supplier_id=? OR backup_supplier_id=?
-                """, (remove_id, remove_id)).fetchone()["c"]
-                if linked_count > 0:
-                    st.error(
-                        f"Can't delete — {linked_count} ingredient(s) still link to this supplier. "
-                        "Change those ingredients' supplier first."
-                    )
-                else:
-                    conn.execute("DELETE FROM suppliers WHERE id=?", (remove_id,))
+            st.write("")
+            st.write("**Delete this supplier**")
+            if linked:
+                st.error(f"Can't delete — {len(linked)} ingredient(s) still link to this supplier. Change those ingredients' supplier first.")
+            else:
+                if st.button("Delete this supplier", key=f"delete_supplier_{s['id']}"):
+                    conn = db.get_connection()
+                    conn.execute("DELETE FROM suppliers WHERE id=?", (s["id"],))
                     conn.commit()
-                    st.success(f"Deleted {remove_label}.")
+                    conn.close()
+                    st.success(f"Deleted {s['name']}.")
                     st.session_state.supplier_mode = "list"
                     st.rerun()
-                conn.close()
 
 
 # =========================================================
@@ -1501,20 +1463,12 @@ elif page == "Staff":
     if "staff_mode" not in st.session_state:
         st.session_state.staff_mode = "list"
 
-    title_col, btn1, btn2, btn3 = st.columns([4, 2, 2, 2])
+    title_col, btn1 = st.columns([7, 2])
     with title_col:
         st.title("Staff & PIN logins")
     with btn1:
-        if st.button("+ Add New Staff", icon=":material/add:", type="primary", use_container_width=True):
+        if st.button("Add New Staff", type="primary", use_container_width=True):
             st.session_state.staff_mode = "add"
-            st.rerun()
-    with btn2:
-        if st.button("Edit Staff", use_container_width=True):
-            st.session_state.staff_mode = "edit"
-            st.rerun()
-    with btn3:
-        if st.button("Remove Staff", use_container_width=True):
-            st.session_state.staff_mode = "remove"
             st.rerun()
 
     if st.session_state.staff_mode != "list":
@@ -1529,16 +1483,22 @@ elif page == "Staff":
 
     # ---------------- LIST VIEW ----------------
     if st.session_state.staff_mode == "list":
-        st.caption("Manage who can log in to this app and what they can do.")
-        table_data = []
+        st.caption("Manage who can log in to this app. Click a name to edit it.")
+
+        header_cols = st.columns([2, 2, 2, 2])
+        for h, label in zip(header_cols, ["Name", "PIN", "Role", "Shared device?"]):
+            h.caption(label)
+
         for s in staff_rows:
-            table_data.append({
-                "Name": s["name"],
-                "PIN": s["pin"],
-                "Role": s["role"],
-                "Shared device?": "Yes" if s["is_shared_device"] else "No",
-            })
-        st.dataframe(pd.DataFrame(table_data), use_container_width=True, hide_index=True)
+            cols = st.columns([2, 2, 2, 2])
+            with cols[0]:
+                if st.button(s["name"], type="tertiary", key=f"staff_name_{s['id']}"):
+                    st.session_state["edit_staff_select"] = f"{s['name']} ({s['role']})"
+                    st.session_state.staff_mode = "edit"
+                    st.rerun()
+            cols[1].write(s["pin"])
+            cols[2].write(s["role"])
+            cols[3].write("Yes" if s["is_shared_device"] else "No")
 
     # ---------------- ADD VIEW ----------------
     elif st.session_state.staff_mode == "add":
@@ -1572,14 +1532,14 @@ elif page == "Staff":
                         st.rerun()
                     conn.close()
 
-    # ---------------- EDIT VIEW ----------------
+    # ---------------- EDIT VIEW (Update + Delete both live here) ----------------
     elif st.session_state.staff_mode == "edit":
-        st.subheader("Edit an existing staff member")
+        st.subheader("Edit staff member")
         if not staff_rows:
             st.info("No staff yet — add one first.")
         else:
             edit_labels = {f"{s['name']} ({s['role']})": s["id"] for s in staff_rows}
-            edit_chosen_label = st.selectbox("Choose a staff member to edit", list(edit_labels.keys()), key="edit_staff_select")
+            edit_chosen_label = st.selectbox("Staff member", list(edit_labels.keys()), key="edit_staff_select")
             edit_id = edit_labels[edit_chosen_label]
 
             conn = db.get_connection()
@@ -1624,30 +1584,23 @@ elif page == "Staff":
                                 st.session_state.staff_mode = "list"
                                 st.rerun()
 
-    # ---------------- REMOVE VIEW ----------------
-    elif st.session_state.staff_mode == "remove":
-        st.subheader("Remove a staff member")
-        if not staff_rows:
-            st.info("No staff to remove yet.")
-        else:
-            staff_labels = {f"{s['name']} ({s['role']})": s["id"] for s in staff_rows}
-            chosen_label = st.selectbox("Choose a staff member to remove", list(staff_labels.keys()), key="remove_staff_select")
-            chosen_id = staff_labels[chosen_label]
+            st.write("")
+            st.write("**Delete this staff member**")
+            conn = db.get_connection()
+            owner_count = conn.execute("SELECT COUNT(*) AS c FROM staff WHERE role = 'owner'").fetchone()["c"]
+            conn.close()
 
-            st.warning(f"This will permanently remove **{chosen_label}**.")
-            if st.button("Confirm delete", type="primary"):
-                conn = db.get_connection()
-                owner_count = conn.execute("SELECT COUNT(*) AS c FROM staff WHERE role = 'owner'").fetchone()["c"]
-                target = conn.execute("SELECT role FROM staff WHERE id = ?", (chosen_id,)).fetchone()
-                if target["role"] == "owner" and owner_count <= 1:
-                    st.error("Can't remove the only owner account. Add another owner/manager first.")
-                else:
-                    conn.execute("DELETE FROM staff WHERE id = ?", (chosen_id,))
+            if edit_current["role"] == "owner" and owner_count <= 1:
+                st.error("Can't remove the only owner account. Add another owner first.")
+            else:
+                if st.button("Delete this staff member", key=f"delete_staff_{edit_id}"):
+                    conn = db.get_connection()
+                    conn.execute("DELETE FROM staff WHERE id = ?", (edit_id,))
                     conn.commit()
+                    conn.close()
                     st.success("Removed.")
                     st.session_state.staff_mode = "list"
                     st.rerun()
-                conn.close()
 
 
 # =========================================================
@@ -1996,6 +1949,7 @@ elif page == "Invoices":
 
             conn.commit()
             conn.close()
+            db.get_cached_ingredients_basic.clear()
             st.success(f"Applied {applied_count} update(s).")
             del st.session_state.invoice_scan
             st.rerun()
