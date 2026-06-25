@@ -5,24 +5,24 @@
 
 [theme]
 # ---- Colors ----
-primaryColor = "#C1592C"            # Accent color (buttons, focus highlights) — terracotta/copper
-backgroundColor = "#FBF8F4"         # Main app background — warm milk-foam white
-secondaryBackgroundColor = "#F1E8DC" # Sidebar & card backgrounds — latte tone
-textColor = "#3A2E27"               # Body text — espresso brown (softer than pure black)
-linkColor = "#C1592C"               # Links match the accent color
+primaryColor = "#0F766E"            # Accent color (buttons, focus, links) — clean teal
+backgroundColor = "#FFFFFF"         # Main app background — clean white
+secondaryBackgroundColor = "#F6F7F8" # Sidebar & card backgrounds — soft neutral gray
+textColor = "#1F2933"               # Body text — near-black slate, not pure black
+linkColor = "#0F766E"               # Links match the accent color
 
 # ---- Typography ----
-font = "sans-serif"        # Body text — Source Sans, clean and highly readable
-headingFont = "serif"      # Headings — Source Serif, a bit of warmth/character
-baseFontSize = 17          # Slightly larger than default for quick glance-readability
+font = "sans-serif"        # Body text — Source Sans
+headingFont = "sans-serif" # Headings — same family as body, for a clean unified look
+baseFontSize = 16          # Standard, compact, efficient for a dashboard
 
 # ---- Shape & borders ----
-baseRadius = "medium"      # Rounded corners on cards, inputs, dataframes
-buttonRadius = "large"     # Buttons rounded a bit more — friendlier, more tappable
-borderColor = "#E3D5C3"    # Soft warm border color
-showWidgetBorder = true    # Show a subtle border on input fields even when not focused
+baseRadius = "small"       # Crisp, minimal corner rounding — professional, not playful
+buttonRadius = "medium"    # Buttons slightly more rounded than cards/inputs
+borderColor = "#E3E6E8"    # Light neutral border color
+showWidgetBorder = true    # Subtle border on input fields even when not focused
 showSidebarBorder = true   # Clean vertical line between sidebar and main content
 
 [theme.sidebar]
-backgroundColor = "#F1E8DC"
-borderColor = "#E3D5C3"
+backgroundColor = "#FFFFFF"
+borderColor = "#E3E6E8"
