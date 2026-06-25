@@ -32,6 +32,42 @@ def _ensure_database_ready():
 
 _ensure_database_ready()
 
+
+def pin_entry_boxes(key_prefix, prefill=None):
+    """
+    Renders 4 small side-by-side single-digit boxes (instead of one long text
+    field) and returns whatever's been typed into them combined into a single
+    string. Note: Streamlit can't auto-jump to the next box as you type the
+    way native OTP inputs do -- you click or tab between boxes manually.
+
+    If `prefill` is given (e.g. an existing 4-digit PIN being edited) and the
+    boxes haven't been touched yet this session, they start pre-filled with
+    those digits instead of empty.
+    """
+    if prefill and len(prefill) == 4:
+        for i in range(4):
+            box_key = f"{key_prefix}_{i}"
+            if box_key not in st.session_state:
+                st.session_state[box_key] = prefill[i]
+
+    box_cols = st.columns([1, 1, 1, 1, 8])
+    digits = []
+    for i in range(4):
+        with box_cols[i]:
+            d = st.text_input(
+                f"PIN digit {i + 1}", max_chars=1, type="password",
+                key=f"{key_prefix}_{i}", label_visibility="collapsed"
+            )
+            digits.append(d)
+    return "".join(digits)
+
+
+def clear_pin_boxes(key_prefix):
+    """Clears a set of 4 PIN boxes (e.g. after a wrong attempt) by resetting their session state."""
+    for i in range(4):
+        st.session_state[f"{key_prefix}_{i}"] = ""
+
+
 # ---------- PIN login gate ----------
 # Nothing below this runs until someone enters a valid PIN.
 if "current_user" not in st.session_state:
@@ -70,22 +106,27 @@ if st.session_state.current_user is None:
                         st.rerun()
 
             else:
-                st.caption("Enter your PIN to continue")
-                pin_entry = st.text_input("PIN", type="password", max_chars=6, label_visibility="collapsed")
+                st.caption("Enter your 4-digit PIN to continue")
+                pin_entry = pin_entry_boxes("login_pin")
                 if st.button("Log in", width="stretch", type="primary"):
-                    conn = db.get_connection()
-                    staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_entry,)).fetchone()
-                    conn.close()
-                    if staff_match is None:
-                        st.error("PIN not recognized.")
-                    elif staff_match["is_shared_device"]:
-                        st.session_state.pending_shared_login = True
-                        st.rerun()
+                    if len(pin_entry) < 4 or not pin_entry.isdigit():
+                        st.error("Please fill in all 4 digits.")
                     else:
-                        st.session_state.current_user = {
-                            "id": staff_match["id"], "name": staff_match["name"], "role": staff_match["role"]
-                        }
-                        st.rerun()
+                        conn = db.get_connection()
+                        staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_entry,)).fetchone()
+                        conn.close()
+                        if staff_match is None:
+                            st.error("PIN not recognized.")
+                            clear_pin_boxes("login_pin")
+                        elif staff_match["is_shared_device"]:
+                            st.session_state.pending_shared_login = True
+                            st.rerun()
+                        else:
+                            st.session_state.current_user = {
+                                "id": staff_match["id"], "name": staff_match["name"], "role": staff_match["role"]
+                            }
+                            st.rerun()
+                st.caption("Forgot your PIN? Ask the Owner to reset it for you, or use the Owner account to reset your own from Settings → Change my PIN once logged in.")
     st.stop()
 
 current_user = st.session_state.current_user
@@ -156,9 +197,61 @@ for option in nav_options:
 page = st.session_state.current_page
 
 st.sidebar.divider()
+if st.sidebar.button("Change my PIN", width="stretch"):
+    st.session_state.show_change_pin = not st.session_state.get("show_change_pin", False)
+    st.rerun()
 if st.sidebar.button("Log out", width="stretch"):
     st.session_state.current_user = None
     st.rerun()
+
+# ---------- Change My PIN (self-service, available to anyone logged in) ----------
+if st.session_state.get("show_change_pin"):
+    st.title("Change my PIN")
+    st.caption(f"Changing the PIN for {current_user['name']}. This only changes your own PIN.")
+
+    st.write("**Current PIN**")
+    current_pin_entry = pin_entry_boxes("change_pin_current")
+    st.write("**New PIN (4 digits)**")
+    new_pin_entry = pin_entry_boxes("change_pin_new")
+    st.write("**Confirm new PIN**")
+    confirm_pin_entry = pin_entry_boxes("change_pin_confirm")
+
+    save_col, cancel_col = st.columns(2)
+    with save_col:
+        if st.button("Save new PIN", type="primary"):
+            if len(current_pin_entry) < 4 or not current_pin_entry.isdigit():
+                st.error("Please fill in your current PIN.")
+            else:
+                conn = db.get_connection()
+                me = conn.execute("SELECT * FROM staff WHERE id = ?", (current_user["id"],)).fetchone()
+                if me is None or me["pin"] != current_pin_entry:
+                    st.error("Current PIN is incorrect.")
+                    conn.close()
+                elif len(new_pin_entry) < 4 or not new_pin_entry.isdigit():
+                    st.error("New PIN must be exactly 4 digits.")
+                    conn.close()
+                elif new_pin_entry != confirm_pin_entry:
+                    st.error("New PIN and confirmation don't match.")
+                    conn.close()
+                else:
+                    clash = conn.execute(
+                        "SELECT id FROM staff WHERE pin = ? AND id != ?", (new_pin_entry, current_user["id"])
+                    ).fetchone()
+                    if clash:
+                        st.error("That PIN is already used by someone else — choose a different one.")
+                        conn.close()
+                    else:
+                        conn.execute("UPDATE staff SET pin = ? WHERE id = ?", (new_pin_entry, current_user["id"]))
+                        conn.commit()
+                        conn.close()
+                        st.success("Your PIN has been updated. You'll use the new one next time you log in.")
+                        st.session_state.show_change_pin = False
+                        st.rerun()
+    with cancel_col:
+        if st.button("Cancel"):
+            st.session_state.show_change_pin = False
+            st.rerun()
+    st.stop()
 
 
 def get_supplier_options():
@@ -261,22 +354,26 @@ if page == "Tasks":
                                     conn.commit()
                                     st.rerun()
                             elif st.session_state.pending_pin_task == pending_key:
-                                pin_try = st.text_input("Worker PIN", type="password", key=f"pin_input_{t['id']}")
+                                pin_try = pin_entry_boxes(f"task_pin_{t['id']}")
                                 confirm_col, cancel_col = st.columns(2)
                                 with confirm_col:
                                     if st.button("Confirm", key=f"confirm_{t['id']}"):
-                                        staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_try,)).fetchone()
-                                        if staff_match is None:
-                                            st.error("PIN not recognized.")
+                                        if len(pin_try) < 4 or not pin_try.isdigit():
+                                            st.error("Please fill in all 4 digits.")
                                         else:
-                                            week_val = db.get_week_start() if t["recurrence"] == "weekly" else None
-                                            conn.execute(
-                                                "INSERT INTO task_log (task_id, week_start_date, completed_by, completed_at) VALUES (?, ?, ?, ?)",
-                                                (t["id"], week_val, staff_match["name"], datetime.now().strftime("%-I:%M %p"))
-                                            )
-                                            conn.commit()
-                                            st.session_state.pending_pin_task = None
-                                            st.rerun()
+                                            staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_try,)).fetchone()
+                                            if staff_match is None:
+                                                st.error("PIN not recognized.")
+                                                clear_pin_boxes(f"task_pin_{t['id']}")
+                                            else:
+                                                week_val = db.get_week_start() if t["recurrence"] == "weekly" else None
+                                                conn.execute(
+                                                    "INSERT INTO task_log (task_id, week_start_date, completed_by, completed_at) VALUES (?, ?, ?, ?)",
+                                                    (t["id"], week_val, staff_match["name"], datetime.now().strftime("%-I:%M %p"))
+                                                )
+                                                conn.commit()
+                                                st.session_state.pending_pin_task = None
+                                                st.rerun()
                                 with cancel_col:
                                     if st.button("Cancel", key=f"cancel_{t['id']}"):
                                         st.session_state.pending_pin_task = None
@@ -1556,15 +1653,16 @@ elif page == "Staff":
             col1, col2 = st.columns(2)
             with col1:
                 new_name = st.text_input("Name")
-                new_pin = st.text_input("PIN (4-6 digits)", max_chars=6)
+                st.write("PIN (4 digits)")
+                new_pin = pin_entry_boxes("add_staff_pin")
             with col2:
                 new_role = st.selectbox("Role", ["staff", "owner"])
                 new_shared = st.checkbox("This is a shared device PIN (e.g. shop iPad)")
 
             submitted = st.form_submit_button("Add staff member")
             if submitted:
-                if not new_name or not new_pin:
-                    st.error("Please enter a name and PIN.")
+                if not new_name or len(new_pin) < 4 or not new_pin.isdigit():
+                    st.error("Please enter a name and a complete 4-digit PIN.")
                 else:
                     conn = db.get_connection()
                     existing = conn.execute("SELECT id FROM staff WHERE pin = ?", (new_pin,)).fetchone()
@@ -1599,7 +1697,8 @@ elif page == "Staff":
                 col1, col2 = st.columns(2)
                 with col1:
                     e_name = st.text_input("Name", value=edit_current["name"])
-                    e_pin = st.text_input("PIN (4-6 digits)", value=edit_current["pin"], max_chars=6)
+                    st.write("PIN (4 digits)")
+                    e_pin = pin_entry_boxes(f"edit_staff_pin_{edit_id}", prefill=edit_current["pin"])
                 with col2:
                     role_choices = ["staff", "owner"]
                     e_role = st.selectbox("Role", role_choices, index=role_choices.index(edit_current["role"]))
@@ -1607,8 +1706,8 @@ elif page == "Staff":
 
                 update_submitted = st.form_submit_button("Update staff member")
                 if update_submitted:
-                    if not e_name or not e_pin:
-                        st.error("Name and PIN can't be empty.")
+                    if not e_name or len(e_pin) < 4 or not e_pin.isdigit():
+                        st.error("Name can't be empty, and PIN must be a complete 4 digits.")
                     else:
                         conn = db.get_connection()
                         pin_clash = conn.execute(
