@@ -26,62 +26,87 @@ if "pending_shared_login" not in st.session_state:
     st.session_state.pending_shared_login = False
 
 if st.session_state.current_user is None:
-    st.title("Cafe Manager")
+    st.write("")
+    st.write("")
+    st.write("")
+    st.write("")
+    left_spacer, center_box, right_spacer = st.columns([1, 1, 1])
 
-    if st.session_state.pending_shared_login:
-        st.subheader("Shop iPad — who are you?")
-        conn = db.get_connection()
-        named_staff = conn.execute(
-            "SELECT id, name, role FROM staff WHERE is_shared_device = 0 ORDER BY name"
-        ).fetchall()
-        conn.close()
-        staff_by_name = {r["name"]: r for r in named_staff}
+    with center_box:
+        with st.container(border=True):
+            st.markdown("##### Cafe Manager")
 
-        if not staff_by_name:
-            st.info("No named staff set up yet — ask a manager to add staff first.")
-        else:
-            chosen_name = st.selectbox("Select your name", list(staff_by_name.keys()))
-            if st.button("Continue"):
-                chosen = staff_by_name[chosen_name]
-                st.session_state.current_user = {"id": chosen["id"], "name": chosen["name"], "role": chosen["role"]}
-                st.session_state.pending_shared_login = False
-                st.rerun()
-        st.stop()
+            if st.session_state.pending_shared_login:
+                st.caption("Shop iPad — who are you?")
+                conn = db.get_connection()
+                named_staff = conn.execute(
+                    "SELECT id, name, role FROM staff WHERE is_shared_device = 0 ORDER BY name"
+                ).fetchall()
+                conn.close()
+                staff_by_name = {r["name"]: r for r in named_staff}
 
-    else:
-        pin_entry = st.text_input("Enter your PIN", type="password", max_chars=6)
-        if st.button("Log in"):
-            conn = db.get_connection()
-            staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_entry,)).fetchone()
-            conn.close()
-            if staff_match is None:
-                st.error("PIN not recognized.")
-            elif staff_match["is_shared_device"]:
-                st.session_state.pending_shared_login = True
-                st.rerun()
+                if not staff_by_name:
+                    st.info("No named staff set up yet — ask a manager to add staff first.")
+                else:
+                    chosen_name = st.selectbox("Select your name", list(staff_by_name.keys()))
+                    if st.button("Continue", width="stretch", type="primary"):
+                        chosen = staff_by_name[chosen_name]
+                        st.session_state.current_user = {"id": chosen["id"], "name": chosen["name"], "role": chosen["role"]}
+                        st.session_state.pending_shared_login = False
+                        st.rerun()
+
             else:
-                st.session_state.current_user = {
-                    "id": staff_match["id"], "name": staff_match["name"], "role": staff_match["role"]
-                }
-                st.rerun()
-        st.stop()
+                st.caption("Enter your PIN to continue")
+                pin_entry = st.text_input("PIN", type="password", max_chars=6, label_visibility="collapsed")
+                if st.button("Log in", width="stretch", type="primary"):
+                    conn = db.get_connection()
+                    staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_entry,)).fetchone()
+                    conn.close()
+                    if staff_match is None:
+                        st.error("PIN not recognized.")
+                    elif staff_match["is_shared_device"]:
+                        st.session_state.pending_shared_login = True
+                        st.rerun()
+                    else:
+                        st.session_state.current_user = {
+                            "id": staff_match["id"], "name": staff_match["name"], "role": staff_match["role"]
+                        }
+                        st.rerun()
+    st.stop()
 
 current_user = st.session_state.current_user
 is_manager = current_user["role"] in ("owner", "manager")
 
-# ---------- Sidebar navigation ----------
-st.sidebar.title("Cafe Manager")
-st.sidebar.write(f"Logged in as **{current_user['name']}** ({current_user['role']})")
-if st.sidebar.button("Log out"):
-    st.session_state.current_user = None
-    st.rerun()
+# ---------- Sidebar navigation (flat text-style links) ----------
+st.sidebar.markdown("##### Cafe Manager")
+st.sidebar.caption(f"Logged in as **{current_user['name']}** ({current_user['role']})")
+st.sidebar.write("")
 
 nav_options = ["Tasks", "Stock Take", "Master Stock List", "Recipes", "Suppliers"]
 if is_manager:
     nav_options.append("Task History")
     nav_options.append("Invoices")
     nav_options.append("Staff")
-page = st.sidebar.radio("Go to", nav_options)
+
+if "current_page" not in st.session_state:
+    st.session_state.current_page = nav_options[0]
+if st.session_state.current_page not in nav_options:
+    st.session_state.current_page = nav_options[0]  # safety net if role changed and a page is no longer available
+
+for option in nav_options:
+    if option == st.session_state.current_page:
+        st.sidebar.markdown(f"**:green[{option}]**")
+    else:
+        if st.sidebar.button(option, type="tertiary", width="stretch", key=f"nav_{option}"):
+            st.session_state.current_page = option
+            st.rerun()
+
+page = st.session_state.current_page
+
+st.sidebar.divider()
+if st.sidebar.button("Log out", width="stretch"):
+    st.session_state.current_user = None
+    st.rerun()
 
 
 def get_supplier_options():
@@ -665,7 +690,7 @@ elif page == "Recipes":
     if "recipe_mode" not in st.session_state:
         st.session_state.recipe_mode = "list"
 
-    title_col, btn1, btn2, btn3 = st.columns([4, 2, 2, 2])
+    title_col, btn1, btn2 = st.columns([5, 2, 2])
     with title_col:
         st.title("Recipes")
     with btn1:
@@ -673,10 +698,6 @@ elif page == "Recipes":
             st.session_state.recipe_mode = "add"
             st.rerun()
     with btn2:
-        if st.button("Edit Recipe", use_container_width=True):
-            st.session_state.recipe_mode = "edit"
-            st.rerun()
-    with btn3:
         if st.button("Remove Recipe", use_container_width=True):
             st.session_state.recipe_mode = "remove"
             st.rerun()
@@ -689,7 +710,7 @@ elif page == "Recipes":
 
     # ---------------- LIST VIEW ----------------
     if st.session_state.recipe_mode == "list":
-        st.caption("Prep, Dish, and Beverage recipes — costed automatically from the Master Stock List.")
+        st.caption("Click a recipe name to edit it. Costs shown include 9% GST.")
 
         conn = db.get_connection()
         all_recipes = conn.execute("SELECT * FROM recipes ORDER BY type, name").fetchall()
@@ -703,22 +724,43 @@ elif page == "Recipes":
                 if not group:
                     continue
                 st.subheader(rtype)
+
+                if rtype == "Prep":
+                    header_cols = st.columns([3, 2, 2, 2])
+                    header_cols[1].caption("Yields")
+                    header_cols[2].caption("Batch cost (incl. GST)")
+                    header_cols[3].caption("Cost / unit")
+                else:
+                    header_cols = st.columns([3, 2, 2, 2])
+                    header_cols[1].caption("Total food cost (incl. GST)")
+                    header_cols[2].caption("Food cost %")
+                    header_cols[3].caption("Selling price (excl. GST)")
+
                 for r in group:
                     cost = db.compute_recipe_cost(r["id"])
-                    cols = st.columns([3, 2, 2, 2, 2])
-                    cols[0].write(f"**{r['name']}**")
+                    cols = st.columns([3, 2, 2, 2])
+
+                    with cols[0]:
+                        if st.button(r["name"], type="tertiary", key=f"recipe_name_{r['id']}"):
+                            st.session_state["edit_recipe_select"] = r["name"]
+                            st.session_state.recipe_mode = "edit"
+                            st.rerun()
+
                     if rtype == "Prep":
-                        cols[1].write(f"Yields {r['yield_qty']:g}{r['yield_unit']}")
-                        cols[2].write(f"Batch cost: ${cost:.2f}")
-                        cols[3].write(f"Cost/unit: ${cost / r['yield_qty']:.4f}" if r["yield_qty"] else "-")
+                        cols[1].write(f"{r['yield_qty']:g}{r['yield_unit']}")
+                        cols[2].write(f"${cost:.2f}")
+                        cols[3].write(f"${cost / r['yield_qty']:.4f}" if r["yield_qty"] else "-")
                     else:
-                        pct = (cost / r["selling_price"] * 100) if r["selling_price"] else None
-                        status = db.food_cost_status(pct)
-                        cols[1].write(f"Cost: ${cost:.2f}")
-                        cols[2].write(f"Price: ${r['selling_price']:.2f}" if r["selling_price"] else "No price set")
-                        if pct is not None:
+                        cols[1].write(f"${cost:.2f}")
+                        if r["selling_price"]:
+                            pct = cost / r["selling_price"] * 100
+                            status = db.food_cost_status(pct)
                             badge = {"ok": "🟢", "warning": "🟡", "alert": "🔴"}[status]
-                            cols[3].write(f"{badge} {pct:.1f}% food cost")
+                            cols[2].write(f"{badge} {pct:.1f}%")
+                            cols[3].write(f"${r['selling_price']:.2f}")
+                        else:
+                            cols[2].write("-")
+                            cols[3].write("No price set")
                 st.write("")
 
     # ---------------- ADD VIEW ----------------
@@ -753,7 +795,7 @@ elif page == "Recipes":
                     ))
                     conn.commit()
                     conn.close()
-                    st.success(f"Added {r_name} ({r_type}). Use \"Edit Recipe\" to add its ingredients.")
+                    st.success(f"Added {r_name} ({r_type}). Click its name in the list to add ingredients.")
                     st.session_state.recipe_mode = "list"
                     st.rerun()
 
