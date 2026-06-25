@@ -93,11 +93,23 @@ if "current_page" not in st.session_state:
 if st.session_state.current_page not in nav_options:
     st.session_state.current_page = nav_options[0]  # safety net if role changed and a page is no longer available
 
+NAV_ICONS = {
+    "Tasks": ":material/checklist:",
+    "Stock Take": ":material/fact_check:",
+    "Master Stock List": ":material/inventory_2:",
+    "Recipes": ":material/menu_book:",
+    "Suppliers": ":material/local_shipping:",
+    "Task History": ":material/history:",
+    "Invoices": ":material/receipt_long:",
+    "Staff": ":material/group:",
+}
+
 for option in nav_options:
+    icon = NAV_ICONS.get(option, ":material/circle:")
     if option == st.session_state.current_page:
-        st.sidebar.markdown(f"**:green[{option}]**")
+        st.sidebar.markdown(f"{icon} **:orange[{option}]**")
     else:
-        if st.sidebar.button(option, type="tertiary", width="stretch", key=f"nav_{option}"):
+        if st.sidebar.button(option, icon=icon, type="tertiary", width="stretch", key=f"nav_{option}"):
             st.session_state.current_page = option
             st.rerun()
 
@@ -136,7 +148,7 @@ if page == "Tasks":
         with title_col:
             st.title("Weekly task workspace")
         with btn1:
-            if st.button("+ Add New Task", use_container_width=True):
+            if st.button("+ Add New Task", icon=":material/add:", type="primary", use_container_width=True):
                 st.session_state.task_mode = "add"
                 st.rerun()
         with btn2:
@@ -186,10 +198,14 @@ if page == "Tasks":
 
                         row_cols = st.columns([5, 2])
                         with row_cols[0]:
-                            if t["recurrence"] == "once" and t["specific_date"]:
-                                st.write(f"{t['title']}  _(one-off: {t['specific_date']})_")
-                            else:
+                            title_col, badge_col = st.columns([5, 2])
+                            with title_col:
                                 st.write(t["title"])
+                            with badge_col:
+                                if t["recurrence"] == "once":
+                                    st.badge(f"One-off: {t['specific_date']}", color="gray")
+                                else:
+                                    st.badge("Weekly", color="orange")
                             if t["notes"]:
                                 with st.expander("Notes"):
                                     st.write(t["notes"])
@@ -442,7 +458,7 @@ if page == "Master Stock List":
     with title_col:
         st.title("Master stock list")
     with btn1:
-        if st.button("+ Add New Ingredient", use_container_width=True):
+        if st.button("+ Add New Ingredient", icon=":material/add:", type="primary", use_container_width=True):
             st.session_state.stock_mode = "add"
             st.rerun()
     with btn2:
@@ -694,7 +710,7 @@ elif page == "Recipes":
     with title_col:
         st.title("Recipes")
     with btn1:
-        if st.button("+ Add New Recipe", use_container_width=True):
+        if st.button("+ Add New Recipe", icon=":material/add:", type="primary", use_container_width=True):
             st.session_state.recipe_mode = "add"
             st.rerun()
     with btn2:
@@ -719,11 +735,17 @@ elif page == "Recipes":
         if not all_recipes:
             st.info("No recipes yet. Click \"+ Add New Recipe\" above to add your first one.")
         else:
+            RECIPE_BADGE_COLOR = {"Prep": "blue", "Dish": "orange", "Beverage": "violet"}
             for rtype in ["Prep", "Dish", "Beverage"]:
                 group = [r for r in all_recipes if r["type"] == rtype]
                 if not group:
                     continue
-                st.subheader(rtype)
+                head_col1, head_col2 = st.columns([3, 9])
+                with head_col1:
+                    st.subheader(rtype)
+                with head_col2:
+                    st.write("")
+                    st.badge(str(len(group)), color=RECIPE_BADGE_COLOR.get(rtype, "gray"))
 
                 if rtype == "Prep":
                     header_cols = st.columns([3, 2, 2, 2])
@@ -992,7 +1014,7 @@ elif page == "Suppliers":
     with title_col:
         st.title("Suppliers")
     with btn1:
-        if st.button("+ Add New Supplier", use_container_width=True):
+        if st.button("+ Add New Supplier", icon=":material/add:", type="primary", use_container_width=True):
             st.session_state.supplier_mode = "add"
             st.rerun()
     with btn2:
@@ -1169,7 +1191,7 @@ elif page == "Staff":
     with title_col:
         st.title("Staff & PIN logins")
     with btn1:
-        if st.button("+ Add New Staff", use_container_width=True):
+        if st.button("+ Add New Staff", icon=":material/add:", type="primary", use_container_width=True):
             st.session_state.staff_mode = "add"
             st.rerun()
     with btn2:
