@@ -32,6 +32,24 @@ def _ensure_database_ready():
 
 _ensure_database_ready()
 
+# ---------- PIN box sizing ----------
+# Targets the actual HTML attribute Streamlit sets for single-character
+# inputs (maxlength="1") rather than a fragile class name -- this is the
+# one attribute that's unique to our 4 PIN boxes and nothing else in the
+# app, so it can't accidentally affect any other text field.
+# Placed here (before the login gate) so it also applies to the login screen,
+# not just pages reached after logging in.
+st.markdown("""
+<style>
+input[maxlength="1"] {
+    font-size: 2.2rem !important;
+    text-align: center !important;
+    height: 3.5rem !important;
+    padding: 0 !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 def pin_entry_boxes(key_prefix, prefill=None):
     """
@@ -50,7 +68,7 @@ def pin_entry_boxes(key_prefix, prefill=None):
             if box_key not in st.session_state:
                 st.session_state[box_key] = prefill[i]
 
-    box_cols = st.columns([1, 1, 1, 1, 8])
+    box_cols = st.columns([1, 1, 1, 1, 4])
     digits = []
     for i in range(4):
         with box_cols[i]:
