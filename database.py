@@ -190,6 +190,19 @@ def find_best_match(target_text, candidates):
     return best, score
 
 
+def migrate_manager_role_to_owner():
+    """
+    The app used to support a 'manager' role. Roles are now simplified to
+    just 'owner' and 'staff'. Any existing staff with role='manager' are
+    upgraded to 'owner' (not downgraded to 'staff') so nobody loses access
+    they previously had. Safe to run every time the app starts.
+    """
+    conn = get_connection()
+    conn.execute("UPDATE staff SET role = 'owner' WHERE role = 'manager'")
+    conn.commit()
+    conn.close()
+
+
 def seed_default_staff():
     """
     Creates one default Owner PIN and one shared 'Shop iPad' PIN, but only

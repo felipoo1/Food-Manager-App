@@ -17,6 +17,7 @@ st.set_page_config(page_title="Cafe Manager", layout="wide")
 db.init_db()
 db.seed_starter_data()
 db.seed_default_staff()
+db.migrate_manager_role_to_owner()
 
 # ---------- PIN login gate ----------
 # Nothing below this runs until someone enters a valid PIN.
@@ -75,7 +76,24 @@ if st.session_state.current_user is None:
     st.stop()
 
 current_user = st.session_state.current_user
-is_manager = current_user["role"] in ("owner", "manager")
+is_owner = current_user["role"] == "owner"
+
+# ---------- Sidebar typography (left-aligned, bigger/bolder nav text) ----------
+# Streamlit's theme settings don't expose per-element text alignment or font
+# weight, so this small CSS block fills that one gap. It only targets the
+# sidebar nav buttons/text, nothing else in the app.
+st.markdown("""
+<style>
+[data-testid="stSidebar"] button p {
+    text-align: left !important;
+    font-size: 1.05rem !important;
+    font-weight: 600 !important;
+}
+[data-testid="stSidebar"] .stMarkdown p {
+    font-size: 1.05rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ---------- Sidebar navigation (flat text-style links) ----------
 st.sidebar.markdown("##### Cafe Manager")
@@ -83,7 +101,7 @@ st.sidebar.caption(f"Logged in as **{current_user['name']}** ({current_user['rol
 st.sidebar.write("")
 
 nav_options = ["Tasks", "Stock Take", "Master Stock List", "Recipes", "Suppliers"]
-if is_manager:
+if is_owner:
     nav_options.append("Task History")
     nav_options.append("Invoices")
     nav_options.append("Staff")
@@ -140,10 +158,10 @@ if page == "Tasks":
 
     if "task_mode" not in st.session_state:
         st.session_state.task_mode = "list"
-    if not is_manager:
-        st.session_state.task_mode = "list"  # safety: only managers can reach add/edit/remove
+    if not is_owner:
+        st.session_state.task_mode = "list"  # safety: only the owner can reach add/edit/remove
 
-    if is_manager:
+    if is_owner:
         title_col, btn1, btn2, btn3 = st.columns([4, 2, 2, 2])
         with title_col:
             st.title("Weekly task workspace")
@@ -1181,9 +1199,13 @@ elif page == "Suppliers":
 
 
 # =========================================================
-# PAGE: STAFF  (managers / owner only)
+# PAGE: STAFF  (owner only)
 # =========================================================
 elif page == "Staff":
+    if not is_owner:
+        st.error("This page is restricted to the Owner account.")
+        st.stop()
+
     if "staff_mode" not in st.session_state:
         st.session_state.staff_mode = "list"
 
@@ -1235,7 +1257,7 @@ elif page == "Staff":
                 new_name = st.text_input("Name")
                 new_pin = st.text_input("PIN (4-6 digits)", max_chars=6)
             with col2:
-                new_role = st.selectbox("Role", ["staff", "manager", "owner"])
+                new_role = st.selectbox("Role", ["staff", "owner"])
                 new_shared = st.checkbox("This is a shared device PIN (e.g. shop iPad)")
 
             submitted = st.form_submit_button("Add staff member")
@@ -1278,7 +1300,7 @@ elif page == "Staff":
                     e_name = st.text_input("Name", value=edit_current["name"])
                     e_pin = st.text_input("PIN (4-6 digits)", value=edit_current["pin"], max_chars=6)
                 with col2:
-                    role_choices = ["staff", "manager", "owner"]
+                    role_choices = ["staff", "owner"]
                     e_role = st.selectbox("Role", role_choices, index=role_choices.index(edit_current["role"]))
                     e_shared = st.checkbox("This is a shared device PIN (e.g. shop iPad)", value=bool(edit_current["is_shared_device"]))
 
@@ -1337,9 +1359,13 @@ elif page == "Staff":
 
 
 # =========================================================
-# PAGE: TASK HISTORY  (managers / owner only)
+# PAGE: TASK HISTORY  (owner only)
 # =========================================================
 elif page == "Task History":
+    if not is_owner:
+        st.error("This page is restricted to the Owner account.")
+        st.stop()
+
     st.title("Task completion history")
     st.caption("Every task completion, who did it, and when — across all days and weeks.")
 
@@ -1385,9 +1411,13 @@ elif page == "Task History":
 
 
 # =========================================================
-# PAGE: INVOICES  (managers / owner only)
+# PAGE: INVOICES  (owner only)
 # =========================================================
 elif page == "Invoices":
+    if not is_owner:
+        st.error("This page is restricted to the Owner account.")
+        st.stop()
+
     st.title("Invoice scanning")
     st.caption("Upload a photo of a supplier invoice. Small price changes (under 10%) are pre-approved; bigger changes need your tick before applying.")
 
