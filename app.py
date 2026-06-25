@@ -819,25 +819,28 @@ elif page == "Recipes":
             if not lines:
                 st.write("No ingredients added yet.")
             else:
+                conn = db.get_connection()
                 for line in lines:
+                    line_cost = db.compute_line_cost(line, conn)
                     if line["ingredient_id"] is not None:
                         label = f"{line['ingredient_name']} — {line['quantity']:g}{line['ingredient_unit']}"
                     else:
                         label = f"{line['sub_recipe_name']} (Prep) — {line['quantity']:g}{line['sub_recipe_unit']}"
-                    row_col1, row_col2 = st.columns([5, 1])
+                    row_col1, row_col2, row_col3 = st.columns([4, 2, 1])
                     row_col1.write(label)
-                    if row_col2.button("Remove", key=f"remove_line_{line['id']}"):
-                        conn = db.get_connection()
+                    row_col2.write(f"${line_cost:.3f}")
+                    if row_col3.button("Remove", key=f"remove_line_{line['id']}"):
                         conn.execute("DELETE FROM recipe_lines WHERE id = ?", (line["id"],))
                         conn.commit()
                         conn.close()
                         st.rerun()
+                conn.close()
 
             # Live cost summary
             live_cost = db.compute_recipe_cost(selected_recipe_id)
             if recipe["type"] == "Prep":
                 st.info(
-                    f"Batch cost: ${live_cost:.2f}  |  "
+                    f"Batch cost (incl. 9% GST): ${live_cost:.2f}  |  "
                     f"Cost per {recipe['yield_unit']}: "
                     f"${(live_cost / recipe['yield_qty']) if recipe['yield_qty'] else 0:.4f}"
                 )
@@ -846,13 +849,13 @@ elif page == "Recipes":
                     pct = live_cost / recipe["selling_price"] * 100
                     status = db.food_cost_status(pct)
                     badge = {"ok": "🟢", "warning": "🟡", "alert": "🔴"}[status]
-                    st.info(f"Food cost: ${live_cost:.2f}  |  Selling price: ${recipe['selling_price']:.2f}  |  {badge} **{pct:.1f}% food cost**")
+                    st.info(f"Total cost (incl. 9% GST): ${live_cost:.2f}  |  Selling price: ${recipe['selling_price']:.2f}  |  {badge} **{pct:.1f}% food cost**")
                     if status == "alert":
                         st.error("⚠️ This recipe is at or above the 30% food cost alert threshold.")
                     elif status == "warning":
                         st.warning("This recipe is above the 25% target food cost.")
                 else:
-                    st.info(f"Food cost: ${live_cost:.2f}  |  No selling price set yet.")
+                    st.info(f"Total cost (incl. 9% GST): ${live_cost:.2f}  |  No selling price set yet.")
 
             st.write("**Add an ingredient or Prep recipe to this:**")
             component_type_choices = ["Raw ingredient"]

@@ -258,6 +258,26 @@ def compute_recipe_cost(recipe_id, conn=None, _visited=None):
     return total
 
 
+def compute_line_cost(line, conn):
+    """
+    Computes the cost contributed by a single recipe_lines row -- either a raw
+    ingredient or a nested Prep recipe. Used to show per-ingredient costs in
+    the recipe editor, using the exact same math as the recipe's total cost.
+    """
+    if line["ingredient_id"] is not None:
+        ing = conn.execute("SELECT * FROM ingredients WHERE id = ?", (line["ingredient_id"],)).fetchone()
+        if ing and ing["purchase_qty"]:
+            return (ing["purchase_price"] / ing["purchase_qty"]) * line["quantity"]
+        return 0.0
+    elif line["sub_recipe_id"] is not None:
+        sub_recipe = conn.execute("SELECT * FROM recipes WHERE id = ?", (line["sub_recipe_id"],)).fetchone()
+        if sub_recipe and sub_recipe["yield_qty"]:
+            sub_total_cost = compute_recipe_cost(line["sub_recipe_id"], conn)
+            return (sub_total_cost / sub_recipe["yield_qty"]) * line["quantity"]
+        return 0.0
+    return 0.0
+
+
 def food_cost_status(food_cost_pct):
     """Returns 'ok', 'warning', or 'alert' based on the 25% target / 30% alert thresholds."""
     if food_cost_pct is None:
