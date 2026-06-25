@@ -1041,23 +1041,32 @@ elif page == "Recipes":
             """, (selected_recipe_id,)).fetchall()
             conn.close()
 
-            # ---- Recipe details (name, yield/price) ----
+            # ---- Recipe details (name, production, portions) ----
             st.write("**Recipe details**")
             with st.form(f"edit_recipe_details_{selected_recipe_id}"):
                 e_name = st.text_input("Recipe name", value=recipe["name"])
                 if recipe["type"] == "Prep":
                     col1, col2 = st.columns(2)
                     with col1:
-                        e_yield_qty = st.number_input("Yield quantity", min_value=0.0, step=1.0, value=float(recipe["yield_qty"] or 0))
+                        e_yield_qty = st.number_input("Production Quantity", min_value=0.0, step=1.0, value=float(recipe["yield_qty"] or 0))
                     with col2:
                         unit_choices = ["g", "ml", "each"]
                         e_yield_unit = st.selectbox(
-                            "Yield unit", unit_choices,
+                            "UOM", unit_choices,
                             index=unit_choices.index(recipe["yield_unit"]) if recipe["yield_unit"] in unit_choices else 0
                         )
                     e_selling_price = None
+                    e_portions = None
                 else:
-                    e_selling_price = st.number_input("Selling price $", min_value=0.0, step=0.01, value=float(recipe["selling_price"] or 0))
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        e_selling_price = st.number_input("Selling price $", min_value=0.0, step=0.01, value=float(recipe["selling_price"] or 0))
+                    with col2:
+                        e_portions = st.number_input(
+                            "No. of Portions (optional)", min_value=0.0, step=1.0,
+                            value=float(recipe["portions"] or 0),
+                            help="Leave at 0 if this recipe is already defined as a single serving."
+                        )
                     e_yield_qty, e_yield_unit = None, None
 
                 details_submitted = st.form_submit_button("Update recipe details")
@@ -1067,12 +1076,87 @@ elif page == "Recipes":
                     else:
                         conn = db.get_connection()
                         conn.execute(
-                            "UPDATE recipes SET name=?, yield_qty=?, yield_unit=?, selling_price=? WHERE id=?",
-                            (e_name, e_yield_qty, e_yield_unit, e_selling_price, selected_recipe_id)
+                            "UPDATE recipes SET name=?, yield_qty=?, yield_unit=?, selling_price=?, portions=? WHERE id=?",
+                            (e_name, e_yield_qty, e_yield_unit, e_selling_price,
+                             e_portions if e_portions and e_portions > 0 else None, selected_recipe_id)
                         )
                         conn.commit()
                         conn.close()
                         st.success(f"Updated {e_name}.")
+                        st.rerun()
+
+            # ---- Tags ----
+            st.write("**Tags**")
+            conn = db.get_connection()
+            all_tag_rows = conn.execute("SELECT tags FROM recipes WHERE tags IS NOT NULL AND tags != ''").fetchall()
+            conn.close()
+            all_known_tags = sorted(set(
+                t.strip() for row in all_tag_rows for t in row["tags"].split(",") if t.strip()
+            ))
+            current_tags = [t.strip() for t in (recipe["tags"] or "").split(",") if t.strip()]
+
+            tag_col1, tag_col2 = st.columns([3, 2])
+            with tag_col1:
+                chosen_tags = st.multiselect(
+                    "Selected tags", options=sorted(set(all_known_tags) | set(current_tags)),
+                    default=current_tags, key=f"tags_select_{selected_recipe_id}"
+                )
+            with tag_col2:
+                new_tag = st.text_input("Or add a new tag", key=f"new_tag_{selected_recipe_id}")
+
+            if st.button("Save tags", key=f"save_tags_{selected_recipe_id}"):
+                final_tags = list(chosen_tags)
+                if new_tag.strip() and new_tag.strip() not in final_tags:
+                    final_tags.append(new_tag.strip())
+                conn = db.get_connection()
+                conn.execute("UPDATE recipes SET tags = ? WHERE id = ?", (", ".join(final_tags), selected_recipe_id))
+                conn.commit()
+                conn.close()
+                st.success("Tags saved.")
+                st.rerun()
+
+            # ---- Conversions ----
+            st.write("**Conversions**")
+            conn = db.get_connection()
+            conversions = conn.execute("SELECT * FROM recipe_conversions WHERE recipe_id = ?", (selected_recipe_id,)).fetchall()
+            conn.close()
+
+            if conversions:
+                for conv in conversions:
+                    cv_col1, cv_col2 = st.columns([5, 1])
+                    cv_col1.write(f"{conv['from_qty']:g} {conv['from_unit']} = {conv['to_qty']:g} {conv['to_unit']}")
+                    if cv_col2.button("Remove", key=f"remove_conv_{conv['id']}"):
+                        conn = db.get_connection()
+                        conn.execute("DELETE FROM recipe_conversions WHERE id = ?", (conv["id"],))
+                        conn.commit()
+                        conn.close()
+                        st.rerun()
+            else:
+                st.caption("No conversions defined yet (e.g. \"1 Shot = 30 ml\").")
+
+            with st.form(f"add_conversion_{selected_recipe_id}", clear_on_submit=True):
+                cf1, cf2, cf3, cf4 = st.columns(4)
+                with cf1:
+                    conv_from_qty = st.number_input("Quantity", min_value=0.0, step=1.0, value=1.0, key=f"conv_fq_{selected_recipe_id}")
+                with cf2:
+                    conv_from_unit = st.text_input("Unit", placeholder="e.g. Shot", key=f"conv_fu_{selected_recipe_id}")
+                with cf3:
+                    conv_to_qty = st.number_input("Equals", min_value=0.0, step=1.0, key=f"conv_tq_{selected_recipe_id}")
+                with cf4:
+                    conv_to_unit = st.selectbox("In unit", ["g", "ml", "each"], key=f"conv_tu_{selected_recipe_id}")
+
+                if st.form_submit_button("+ Add item"):
+                    if not conv_from_unit or conv_from_qty <= 0 or conv_to_qty <= 0:
+                        st.error("Please fill in all conversion fields with values greater than zero.")
+                    else:
+                        conn = db.get_connection()
+                        conn.execute(
+                            "INSERT INTO recipe_conversions (recipe_id, from_qty, from_unit, to_qty, to_unit) VALUES (?, ?, ?, ?, ?)",
+                            (selected_recipe_id, conv_from_qty, conv_from_unit.strip(), conv_to_qty, conv_to_unit)
+                        )
+                        conn.commit()
+                        conn.close()
+                        st.success("Conversion added.")
                         st.rerun()
 
             st.markdown("---")
@@ -1118,6 +1202,9 @@ elif page == "Recipes":
                 else:
                     st.info(f"Total cost (incl. 9% GST): ${live_cost:.2f}  |  No selling price set yet.")
 
+                if recipe["portions"] and recipe["portions"] > 0:
+                    st.caption(f"Cost per portion (÷ {recipe['portions']:g} portions): ${live_cost / recipe['portions']:.3f}")
+
             st.write("**Add an ingredient or Prep recipe to this:**")
             component_type_choices = ["Raw ingredient"]
             if recipe["type"] in ("Dish", "Beverage"):
@@ -1154,11 +1241,23 @@ elif page == "Recipes":
                         chosen_id = prep_options[chosen_label]
                         conn = db.get_connection()
                         prep_unit = conn.execute("SELECT yield_unit FROM recipes WHERE id = ?", (chosen_id,)).fetchone()["yield_unit"]
+                        prep_conversions = conn.execute(
+                            "SELECT DISTINCT from_unit FROM recipe_conversions WHERE recipe_id = ?", (chosen_id,)
+                        ).fetchall()
                         conn.close()
-                        qty = st.number_input(
-                            f"Quantity used ({prep_unit})", min_value=0.0, step=1.0,
+
+                        unit_options = [prep_unit] + [c["from_unit"] for c in prep_conversions]
+                        entry_unit = st.selectbox(
+                            "Enter quantity in", unit_options,
+                            key=f"add_line_prep_unit_{selected_recipe_id}"
+                        )
+                        qty_entered = st.number_input(
+                            f"Quantity used ({entry_unit})", min_value=0.0, step=1.0,
                             key=f"add_line_qty_prep_{selected_recipe_id}"
                         )
+                        qty = db.convert_to_base_unit(chosen_id, qty_entered, entry_unit, prep_unit)
+                        if entry_unit != prep_unit and qty_entered > 0:
+                            st.caption(f"= {qty:g}{prep_unit}")
                     else:
                         st.write("No Prep recipes available yet.")
                         chosen_id, qty = None, 0

@@ -171,12 +171,29 @@ def init_db():
 
     # Migration safety net: adds category_id to recipes if this database was
     # created before recipe_categories existed. Safe to run every time.
+    def _ensure_column(table, column, coltype):
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ? AND column_name = ?",
+            (table, column)
+        )
+        if not cur.fetchone():
+            cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
+
+    _ensure_column("recipes", "category_id", "INTEGER")
+    _ensure_column("recipes", "tags", "TEXT")
+    _ensure_column("recipes", "portions", "REAL")
+
     cur.execute("""
-        SELECT column_name FROM information_schema.columns
-        WHERE table_name = 'recipes' AND column_name = 'category_id'
+        CREATE TABLE IF NOT EXISTS recipe_conversions (
+            id SERIAL PRIMARY KEY,
+            recipe_id INTEGER NOT NULL,
+            from_qty REAL NOT NULL,
+            from_unit TEXT NOT NULL,
+            to_qty REAL NOT NULL,
+            to_unit TEXT NOT NULL,
+            FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+        )
     """)
-    if not cur.fetchone():
-        cur.execute("ALTER TABLE recipes ADD COLUMN category_id INTEGER")
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS recipe_lines (
@@ -344,6 +361,31 @@ def seed_default_staff():
     )
     conn.commit()
     conn.close()
+
+
+def convert_to_base_unit(recipe_id, quantity, chosen_unit, base_unit, conn=None):
+    """
+    Converts a quantity entered in an alternate unit (defined via this
+    recipe's Conversions, e.g. "1 Shot = 30 ml") into the recipe's base
+    yield_unit, so the costing engine -- which always works in the base
+    unit -- doesn't need to know about conversions at all.
+    If chosen_unit already IS the base unit, returns quantity unchanged.
+    """
+    if chosen_unit == base_unit:
+        return quantity
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM recipe_conversions WHERE recipe_id = ? AND from_unit = ?",
+        (recipe_id, chosen_unit)
+    ).fetchone()
+    if owns_conn:
+        conn.close()
+    if row and row["from_qty"]:
+        ratio = row["to_qty"] / row["from_qty"]
+        return quantity * ratio
+    return quantity
 
 
 def compute_recipe_cost(recipe_id, conn=None, _visited=None):
