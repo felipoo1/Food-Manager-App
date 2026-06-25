@@ -13,11 +13,24 @@ import database as db
 
 st.set_page_config(page_title="Cafe Manager", layout="wide")
 
-# Make sure the database and starter data exist every time the app starts
-db.init_db()
-db.seed_starter_data()
-db.seed_default_staff()
-db.migrate_manager_role_to_owner()
+
+@st.cache_resource
+def _ensure_database_ready():
+    """
+    Runs all one-time setup (create tables, seed starter data, migrations)
+    exactly ONCE per running app process, instead of on every single click.
+    Before this fix, init_db()'s ~10 tables and several schema checks were
+    silently re-running on every page switch -- this was likely the single
+    biggest cause of the app feeling slow to navigate.
+    """
+    db.init_db()
+    db.seed_starter_data()
+    db.seed_default_staff()
+    db.migrate_manager_role_to_owner()
+    return True
+
+
+_ensure_database_ready()
 
 # ---------- PIN login gate ----------
 # Nothing below this runs until someone enters a valid PIN.
