@@ -707,13 +707,19 @@ if page == "Master Stock List":
 # PAGE 2: RECIPES
 # =========================================================
 elif page == "Recipes":
-    def recipe_options(type_filter=None, exclude_id=None):
+    TYPE_EMOJI = {"Prep": "🥣", "Dish": "🍽️", "Beverage": "🥤"}
+    TYPE_COLOR = {"Prep": "#2563EB", "Dish": "#F2722D", "Beverage": "#7C3AED"}
+
+    def recipe_options(type_filter=None, category_filter=None, exclude_id=None):
         conn = db.get_connection()
         query = "SELECT id, name FROM recipes"
         clauses, params = [], []
         if type_filter:
             clauses.append("type = ?")
             params.append(type_filter)
+        if category_filter is not None:
+            clauses.append("category_id = ?")
+            params.append(category_filter)
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY name"
@@ -721,95 +727,266 @@ elif page == "Recipes":
         conn.close()
         return {r["name"]: r["id"] for r in rows if r["id"] != exclude_id}
 
+    def render_category_image_or_placeholder(image_url, rtype, height_px=140):
+        if image_url:
+            st.image(image_url, use_container_width=True)
+        else:
+            color = TYPE_COLOR.get(rtype, "#999999")
+            emoji = TYPE_EMOJI.get(rtype, "🍴")
+            st.markdown(
+                f"""<div style="height:{height_px}px; border-radius: 0.5rem; background: {color}1A;
+                     display:flex; align-items:center; justify-content:center; margin-bottom: 0.5rem;
+                     font-size: 48px;">{emoji}</div>""",
+                unsafe_allow_html=True
+            )
+
     if "recipe_mode" not in st.session_state:
-        st.session_state.recipe_mode = "list"
+        st.session_state.recipe_mode = "categories"
+    if "recipe_active_type" not in st.session_state:
+        st.session_state.recipe_active_type = "Prep"
 
-    title_col, btn1, btn2 = st.columns([5, 2, 2])
-    with title_col:
-        st.title("Recipes")
-    with btn1:
-        if st.button("+ Add New Recipe", icon=":material/add:", type="primary", use_container_width=True):
-            st.session_state.recipe_mode = "add"
-            st.rerun()
-    with btn2:
-        if st.button("Remove Recipe", use_container_width=True):
-            st.session_state.recipe_mode = "remove"
-            st.rerun()
+    st.title("Recipes")
 
-    if st.session_state.recipe_mode != "list":
-        if st.button("← Back to list"):
-            st.session_state.recipe_mode = "list"
+    if st.session_state.recipe_mode != "categories":
+        if st.button("← Back"):
+            if st.session_state.recipe_mode in ("add_recipe", "edit_recipe", "remove_recipe", "edit_category", "remove_category"):
+                st.session_state.recipe_mode = "category_detail"
+            else:
+                st.session_state.recipe_mode = "categories"
             st.rerun()
         st.write("")
 
-    # ---------------- LIST VIEW ----------------
-    if st.session_state.recipe_mode == "list":
+    # ======================================================
+    # CATEGORIES GRID (top level)
+    # ======================================================
+    if st.session_state.recipe_mode == "categories":
+        type_tabs = st.tabs(["Prep", "Dish", "Beverage"])
+        for tab, rtype in zip(type_tabs, ["Prep", "Dish", "Beverage"]):
+            with tab:
+                top_col1, top_col2 = st.columns([8, 3])
+                with top_col2:
+                    if st.button("+ New Category", icon=":material/add:", type="primary", use_container_width=True, key=f"newcat_{rtype}"):
+                        st.session_state.recipe_active_type = rtype
+                        st.session_state.recipe_mode = "add_category"
+                        st.rerun()
+
+                conn = db.get_connection()
+                categories = conn.execute(
+                    "SELECT * FROM recipe_categories WHERE type = ? ORDER BY name", (rtype,)
+                ).fetchall()
+                counts = {}
+                for c in categories:
+                    counts[c["id"]] = conn.execute(
+                        "SELECT COUNT(*) AS n FROM recipes WHERE category_id = ?", (c["id"],)
+                    ).fetchone()["n"]
+                conn.close()
+
+                if not categories:
+                    st.info(f"No {rtype} categories yet. Click \"+ New Category\" to create one (e.g. \"Coffee Preps\", \"Pasta\").")
+                else:
+                    cards_per_row = 3
+                    for i in range(0, len(categories), cards_per_row):
+                        row_cats = categories[i:i + cards_per_row]
+                        row_cols = st.columns(cards_per_row)
+                        for col, cat in zip(row_cols, row_cats):
+                            with col:
+                                with st.container(border=True):
+                                    render_category_image_or_placeholder(cat["image_url"], rtype)
+                                    if st.button(cat["name"], type="tertiary", key=f"cat_open_{cat['id']}"):
+                                        st.session_state.recipe_active_category_id = cat["id"]
+                                        st.session_state.recipe_active_type = rtype
+                                        st.session_state.recipe_mode = "category_detail"
+                                        st.rerun()
+                                    n = counts[cat["id"]]
+                                    st.caption(f"{n} recipe{'s' if n != 1 else ''}")
+
+    # ======================================================
+    # ADD CATEGORY
+    # ======================================================
+    elif st.session_state.recipe_mode == "add_category":
+        rtype = st.session_state.recipe_active_type
+        st.subheader(f"New {rtype} Category")
+
+        cat_name = st.text_input("Category Name", placeholder="What's the name of this category?")
+        uploaded_image = st.file_uploader("Recipe Category Image (optional)", type=["png", "jpg", "jpeg"])
+
+        if st.button("Submit", type="primary"):
+            if not cat_name:
+                st.error("Please enter a category name.")
+            else:
+                image_url = None
+                if uploaded_image is not None:
+                    if "SUPABASE_URL" not in st.secrets or "SUPABASE_SERVICE_KEY" not in st.secrets:
+                        st.warning("Image upload isn't set up yet (missing Supabase Storage secrets) — saving the category without an image for now.")
+                    else:
+                        image_url = db.upload_category_image(
+                            uploaded_image.getvalue(), uploaded_image.name, uploaded_image.type
+                        )
+                        if image_url is None:
+                            st.warning("Image upload failed — saving the category without an image for now.")
+
+                conn = db.get_connection()
+                conn.execute(
+                    "INSERT INTO recipe_categories (name, type, image_url, created_at) VALUES (?, ?, ?, ?)",
+                    (cat_name, rtype, image_url, date.today().isoformat())
+                )
+                conn.commit()
+                conn.close()
+                st.success(f"Created category \"{cat_name}\".")
+                st.session_state.recipe_mode = "categories"
+                st.rerun()
+
+    # ======================================================
+    # CATEGORY DETAIL (recipes within one category)
+    # ======================================================
+    elif st.session_state.recipe_mode == "category_detail":
+        cat_id = st.session_state.recipe_active_category_id
+        conn = db.get_connection()
+        category = conn.execute("SELECT * FROM recipe_categories WHERE id = ?", (cat_id,)).fetchone()
+        conn.close()
+
+        if category is None:
+            st.error("This category no longer exists.")
+            st.session_state.recipe_mode = "categories"
+            st.stop()
+
+        rtype = category["type"]
+        head_col1, head_col2, head_col3, head_col4 = st.columns([5, 2, 2, 2])
+        with head_col1:
+            st.subheader(category["name"])
+            st.caption(f"{rtype} category")
+        with head_col2:
+            if st.button("+ Add New Recipe", icon=":material/add:", type="primary", use_container_width=True):
+                st.session_state.recipe_mode = "add_recipe"
+                st.rerun()
+        with head_col3:
+            if st.button("Edit Category", use_container_width=True):
+                st.session_state.recipe_mode = "edit_category"
+                st.rerun()
+        with head_col4:
+            if st.button("Remove Category", use_container_width=True):
+                st.session_state.recipe_mode = "remove_category"
+                st.rerun()
+
         st.caption("Click a recipe name to edit it. Costs shown include 9% GST.")
 
         conn = db.get_connection()
-        all_recipes = conn.execute("SELECT * FROM recipes ORDER BY type, name").fetchall()
+        recipes_in_cat = conn.execute(
+            "SELECT * FROM recipes WHERE category_id = ? ORDER BY name", (cat_id,)
+        ).fetchall()
         conn.close()
 
-        if not all_recipes:
-            st.info("No recipes yet. Click \"+ Add New Recipe\" above to add your first one.")
+        if not recipes_in_cat:
+            st.info("No recipes in this category yet. Click \"+ Add New Recipe\" above.")
         else:
-            RECIPE_BADGE_COLOR = {"Prep": "blue", "Dish": "orange", "Beverage": "violet"}
-            for rtype in ["Prep", "Dish", "Beverage"]:
-                group = [r for r in all_recipes if r["type"] == rtype]
-                if not group:
-                    continue
-                head_col1, head_col2 = st.columns([3, 9])
-                with head_col1:
-                    st.subheader(rtype)
-                with head_col2:
-                    st.write("")
-                    st.badge(str(len(group)), color=RECIPE_BADGE_COLOR.get(rtype, "gray"))
+            if rtype == "Prep":
+                header_cols = st.columns([3, 2, 2, 2])
+                header_cols[1].caption("Yields")
+                header_cols[2].caption("Batch cost (incl. GST)")
+                header_cols[3].caption("Cost / unit")
+            else:
+                header_cols = st.columns([3, 2, 2, 2])
+                header_cols[1].caption("Total food cost (incl. GST)")
+                header_cols[2].caption("Food cost %")
+                header_cols[3].caption("Selling price (excl. GST)")
 
+            for r in recipes_in_cat:
+                cost = db.compute_recipe_cost(r["id"])
+                cols = st.columns([3, 2, 2, 2])
+                with cols[0]:
+                    if st.button(r["name"], type="tertiary", key=f"recipe_name_{r['id']}"):
+                        st.session_state["edit_recipe_select"] = r["name"]
+                        st.session_state.recipe_mode = "edit_recipe"
+                        st.rerun()
                 if rtype == "Prep":
-                    header_cols = st.columns([3, 2, 2, 2])
-                    header_cols[1].caption("Yields")
-                    header_cols[2].caption("Batch cost (incl. GST)")
-                    header_cols[3].caption("Cost / unit")
+                    cols[1].write(f"{r['yield_qty']:g}{r['yield_unit']}" if r["yield_qty"] else "-")
+                    cols[2].write(f"${cost:.2f}")
+                    cols[3].write(f"${cost / r['yield_qty']:.4f}" if r["yield_qty"] else "-")
                 else:
-                    header_cols = st.columns([3, 2, 2, 2])
-                    header_cols[1].caption("Total food cost (incl. GST)")
-                    header_cols[2].caption("Food cost %")
-                    header_cols[3].caption("Selling price (excl. GST)")
-
-                for r in group:
-                    cost = db.compute_recipe_cost(r["id"])
-                    cols = st.columns([3, 2, 2, 2])
-
-                    with cols[0]:
-                        if st.button(r["name"], type="tertiary", key=f"recipe_name_{r['id']}"):
-                            st.session_state["edit_recipe_select"] = r["name"]
-                            st.session_state.recipe_mode = "edit"
-                            st.rerun()
-
-                    if rtype == "Prep":
-                        cols[1].write(f"{r['yield_qty']:g}{r['yield_unit']}")
-                        cols[2].write(f"${cost:.2f}")
-                        cols[3].write(f"${cost / r['yield_qty']:.4f}" if r["yield_qty"] else "-")
+                    cols[1].write(f"${cost:.2f}")
+                    if r["selling_price"]:
+                        pct = cost / r["selling_price"] * 100
+                        status = db.food_cost_status(pct)
+                        badge = {"ok": "🟢", "warning": "🟡", "alert": "🔴"}[status]
+                        cols[2].write(f"{badge} {pct:.1f}%")
+                        cols[3].write(f"${r['selling_price']:.2f}")
                     else:
-                        cols[1].write(f"${cost:.2f}")
-                        if r["selling_price"]:
-                            pct = cost / r["selling_price"] * 100
-                            status = db.food_cost_status(pct)
-                            badge = {"ok": "🟢", "warning": "🟡", "alert": "🔴"}[status]
-                            cols[2].write(f"{badge} {pct:.1f}%")
-                            cols[3].write(f"${r['selling_price']:.2f}")
-                        else:
-                            cols[2].write("-")
-                            cols[3].write("No price set")
-                st.write("")
+                        cols[2].write("-")
+                        cols[3].write("No price set")
 
-    # ---------------- ADD VIEW ----------------
-    elif st.session_state.recipe_mode == "add":
-        st.subheader("Add a new recipe")
+    # ======================================================
+    # EDIT CATEGORY
+    # ======================================================
+    elif st.session_state.recipe_mode == "edit_category":
+        cat_id = st.session_state.recipe_active_category_id
+        conn = db.get_connection()
+        category = conn.execute("SELECT * FROM recipe_categories WHERE id = ?", (cat_id,)).fetchone()
+        conn.close()
+
+        st.subheader(f"Edit Category: {category['name']}")
+        new_name = st.text_input("Category Name", value=category["name"])
+        st.caption("Current image:")
+        render_category_image_or_placeholder(category["image_url"], category["type"], height_px=100)
+        uploaded_image = st.file_uploader("Replace image (optional)", type=["png", "jpg", "jpeg"])
+
+        if st.button("Save changes", type="primary"):
+            if not new_name:
+                st.error("Category name can't be empty.")
+            else:
+                image_url = category["image_url"]
+                if uploaded_image is not None and "SUPABASE_URL" in st.secrets and "SUPABASE_SERVICE_KEY" in st.secrets:
+                    new_url = db.upload_category_image(uploaded_image.getvalue(), uploaded_image.name, uploaded_image.type)
+                    if new_url:
+                        image_url = new_url
+                conn = db.get_connection()
+                conn.execute(
+                    "UPDATE recipe_categories SET name = ?, image_url = ? WHERE id = ?",
+                    (new_name, image_url, cat_id)
+                )
+                conn.commit()
+                conn.close()
+                st.success("Updated.")
+                st.session_state.recipe_mode = "category_detail"
+                st.rerun()
+
+    # ======================================================
+    # REMOVE CATEGORY
+    # ======================================================
+    elif st.session_state.recipe_mode == "remove_category":
+        cat_id = st.session_state.recipe_active_category_id
+        conn = db.get_connection()
+        category = conn.execute("SELECT * FROM recipe_categories WHERE id = ?", (cat_id,)).fetchone()
+        recipe_count = conn.execute("SELECT COUNT(*) AS c FROM recipes WHERE category_id = ?", (cat_id,)).fetchone()["c"]
+        conn.close()
+
+        st.subheader(f"Remove Category: {category['name']}")
+        if recipe_count > 0:
+            st.error(f"Can't delete — this category still has {recipe_count} recipe(s) in it. Move or remove those first.")
+        else:
+            st.warning(f"This will permanently delete the \"{category['name']}\" category.")
+            if st.button("Confirm delete", type="primary"):
+                conn = db.get_connection()
+                conn.execute("DELETE FROM recipe_categories WHERE id = ?", (cat_id,))
+                conn.commit()
+                conn.close()
+                st.success("Deleted.")
+                st.session_state.recipe_mode = "categories"
+                st.rerun()
+
+    # ======================================================
+    # ADD RECIPE (within a category)
+    # ======================================================
+    elif st.session_state.recipe_mode == "add_recipe":
+        cat_id = st.session_state.recipe_active_category_id
+        conn = db.get_connection()
+        category = conn.execute("SELECT * FROM recipe_categories WHERE id = ?", (cat_id,)).fetchone()
+        conn.close()
+        rtype = category["type"]
+
+        st.subheader(f"Add a new recipe to \"{category['name']}\"")
 
         with st.form("add_recipe_form", clear_on_submit=True):
             r_name = st.text_input("Recipe name")
-            r_type = st.selectbox("Recipe category", ["Prep", "Dish", "Beverage"])
 
             col1, col2 = st.columns(2)
             with col1:
@@ -825,22 +1002,24 @@ elif page == "Recipes":
                 else:
                     conn = db.get_connection()
                     conn.execute("""
-                        INSERT INTO recipes (name, type, yield_qty, yield_unit, selling_price)
-                        VALUES (?, ?, ?, ?, ?)
+                        INSERT INTO recipes (name, type, category_id, yield_qty, yield_unit, selling_price)
+                        VALUES (?, ?, ?, ?, ?, ?)
                     """, (
-                        r_name, r_type,
-                        r_yield_qty if r_type == "Prep" else None,
-                        r_yield_unit if r_type == "Prep" else None,
-                        r_selling_price if r_type in ("Dish", "Beverage") else None,
+                        r_name, rtype, cat_id,
+                        r_yield_qty if rtype == "Prep" else None,
+                        r_yield_unit if rtype == "Prep" else None,
+                        r_selling_price if rtype in ("Dish", "Beverage") else None,
                     ))
                     conn.commit()
                     conn.close()
-                    st.success(f"Added {r_name} ({r_type}). Click its name in the list to add ingredients.")
-                    st.session_state.recipe_mode = "list"
+                    st.success(f"Added {r_name}. Click its name in the list to add ingredients.")
+                    st.session_state.recipe_mode = "category_detail"
                     st.rerun()
 
-    # ---------------- EDIT VIEW ----------------
-    elif st.session_state.recipe_mode == "edit":
+    # ======================================================
+    # EDIT RECIPE
+    # ======================================================
+    elif st.session_state.recipe_mode == "edit_recipe":
         st.subheader("Edit a recipe")
 
         all_recipe_options = recipe_options()
@@ -953,21 +1132,33 @@ elif page == "Recipes":
                     conn.close()
                     ing_labels = {f"{r['name']} ({r['base_unit']})": (r["id"], r["base_unit"]) for r in ing_rows}
                     if ing_labels:
-                        chosen_label = st.selectbox("Ingredient", list(ing_labels.keys()))
+                        chosen_label = st.selectbox(
+                            "Ingredient", list(ing_labels.keys()),
+                            key=f"add_line_ingredient_{selected_recipe_id}"
+                        )
                         chosen_id, chosen_unit = ing_labels[chosen_label]
-                        qty = st.number_input(f"Quantity used ({chosen_unit})", min_value=0.0, step=1.0)
+                        qty = st.number_input(
+                            f"Quantity used ({chosen_unit})", min_value=0.0, step=1.0,
+                            key=f"add_line_qty_ingredient_{selected_recipe_id}"
+                        )
                     else:
                         st.write("No ingredients in your Master Stock List yet.")
                         chosen_id, qty = None, 0
                 else:
                     prep_options = recipe_options(type_filter="Prep", exclude_id=selected_recipe_id)
                     if prep_options:
-                        chosen_label = st.selectbox("Prep recipe", list(prep_options.keys()))
+                        chosen_label = st.selectbox(
+                            "Prep recipe", list(prep_options.keys()),
+                            key=f"add_line_prep_{selected_recipe_id}"
+                        )
                         chosen_id = prep_options[chosen_label]
                         conn = db.get_connection()
                         prep_unit = conn.execute("SELECT yield_unit FROM recipes WHERE id = ?", (chosen_id,)).fetchone()["yield_unit"]
                         conn.close()
-                        qty = st.number_input(f"Quantity used ({prep_unit})", min_value=0.0, step=1.0)
+                        qty = st.number_input(
+                            f"Quantity used ({prep_unit})", min_value=0.0, step=1.0,
+                            key=f"add_line_qty_prep_{selected_recipe_id}"
+                        )
                     else:
                         st.write("No Prep recipes available yet.")
                         chosen_id, qty = None, 0
@@ -993,8 +1184,10 @@ elif page == "Recipes":
                         st.success("Added.")
                         st.rerun()
 
-    # ---------------- REMOVE VIEW ----------------
-    elif st.session_state.recipe_mode == "remove":
+    # ======================================================
+    # REMOVE RECIPE
+    # ======================================================
+    elif st.session_state.recipe_mode == "remove_recipe":
         st.subheader("Remove a recipe")
 
         all_recipe_options = recipe_options()
@@ -1016,7 +1209,7 @@ elif page == "Recipes":
                     conn.execute("DELETE FROM recipes WHERE id = ?", (remove_id,))
                     conn.commit()
                     st.success(f"Deleted {remove_name}.")
-                    st.session_state.recipe_mode = "list"
+                    st.session_state.recipe_mode = "category_detail"
                     st.rerun()
                 conn.close()
 

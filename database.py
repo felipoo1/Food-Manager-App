@@ -15,7 +15,24 @@ file -- so your data survives app restarts and redeploys.
 import streamlit as st
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 from datetime import date, timedelta
+
+
+# =========================================================
+# Connection pooling
+# ---------------------------------------------------------
+# Opening a brand new connection to Supabase for every single query (the
+# original approach) requires a fresh network handshake each time, which is
+# slow over the internet. A connection pool keeps a small set of connections
+# open and ready, so "get_connection()" just borrows one instead of
+# reconnecting from scratch -- this is what was making actions like removing
+# an ingredient feel slow.
+# =========================================================
+
+@st.cache_resource
+def _get_pool():
+    return psycopg2.pool.ThreadedConnectionPool(1, 10, st.secrets["SUPABASE_DB_URL"])
 
 
 # =========================================================
@@ -57,8 +74,10 @@ class _CursorWrapper:
 
 
 class _ConnWrapper:
-    def __init__(self, pg_conn):
+    def __init__(self, pg_conn, pool):
         self._conn = pg_conn
+        self._pool = pool
+        self._returned = False
 
     def cursor(self):
         real_cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -73,13 +92,18 @@ class _ConnWrapper:
         self._conn.commit()
 
     def close(self):
-        self._conn.close()
+        # Instead of truly closing the TCP connection, return it to the pool
+        # so the next get_connection() call can reuse it immediately.
+        if not self._returned:
+            self._pool.putconn(self._conn)
+            self._returned = True
 
 
 def get_connection():
-    """Opens a connection to the Supabase Postgres database."""
-    pg_conn = psycopg2.connect(st.secrets["SUPABASE_DB_URL"])
-    return _ConnWrapper(pg_conn)
+    """Borrows a connection from the pool (instead of opening a new one each time)."""
+    pool = _get_pool()
+    pg_conn = pool.getconn()
+    return _ConnWrapper(pg_conn, pool)
 
 
 # =========================================================
@@ -123,15 +147,36 @@ def init_db():
     """)
 
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS recipe_categories (
+            id SERIAL PRIMARY KEY,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,        -- 'Prep', 'Dish', or 'Beverage' -- which tab this category lives under
+            image_url TEXT,            -- public URL in Supabase Storage, or NULL to use a placeholder icon
+            created_at TEXT
+        )
+    """)
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS recipes (
             id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             type TEXT NOT NULL,
+            category_id INTEGER,
             yield_qty REAL,
             yield_unit TEXT,
-            selling_price REAL
+            selling_price REAL,
+            FOREIGN KEY (category_id) REFERENCES recipe_categories(id)
         )
     """)
+
+    # Migration safety net: adds category_id to recipes if this database was
+    # created before recipe_categories existed. Safe to run every time.
+    cur.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'recipes' AND column_name = 'category_id'
+    """)
+    if not cur.fetchone():
+        cur.execute("ALTER TABLE recipes ADD COLUMN category_id INTEGER")
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS recipe_lines (
@@ -210,6 +255,39 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+def upload_category_image(file_bytes, file_name, content_type):
+    """
+    Uploads an image to Supabase Storage (bucket: recipe-images) and returns
+    its public URL, or None if the upload failed. Requires SUPABASE_URL and
+    SUPABASE_SERVICE_KEY to be set in Streamlit secrets.
+    """
+    import requests
+    import time
+    import re
+
+    project_url = st.secrets["SUPABASE_URL"].rstrip("/")
+    api_key = st.secrets["SUPABASE_SERVICE_KEY"]
+    bucket = "recipe-images"
+
+    safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", file_name)
+    path = f"{int(time.time())}_{safe_name}"
+
+    upload_url = f"{project_url}/storage/v1/object/{bucket}/{path}"
+    response = requests.post(
+        upload_url,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": content_type,
+        },
+        data=file_bytes,
+        timeout=30,
+    )
+
+    if response.status_code in (200, 201):
+        return f"{project_url}/storage/v1/object/public/{bucket}/{path}"
+    return None
 
 
 def find_best_match(target_text, candidates):
