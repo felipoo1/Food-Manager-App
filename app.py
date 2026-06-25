@@ -757,6 +757,11 @@ elif page == "Recipes":
 
     st.title("Recipes")
 
+    search_text = st.text_input(
+        "Search recipes", key="recipe_search", label_visibility="collapsed",
+        placeholder="Search all recipes by name..."
+    )
+
     if st.session_state.recipe_mode != "categories":
         if st.button("← Back"):
             if st.session_state.recipe_mode in ("add_recipe", "edit_recipe", "edit_category", "remove_category"):
@@ -767,9 +772,40 @@ elif page == "Recipes":
         st.write("")
 
     # ======================================================
-    # CATEGORIES GRID (top level)
+    # CATEGORIES GRID (top level) -- or search results, if searching
     # ======================================================
-    if st.session_state.recipe_mode == "categories":
+    if st.session_state.recipe_mode == "categories" and search_text.strip():
+        conn = db.get_connection()
+        results = conn.execute("""
+            SELECT r.*, rc.name AS category_name
+            FROM recipes r
+            LEFT JOIN recipe_categories rc ON r.category_id = rc.id
+            WHERE r.name ILIKE ?
+            ORDER BY r.type, r.name
+        """, (f"%{search_text.strip()}%",)).fetchall()
+        conn.close()
+
+        if not results:
+            st.info(f"No recipes match \"{search_text}\".")
+        else:
+            st.caption(f"{len(results)} recipe(s) match \"{search_text}\" — click a name to edit it.")
+            header_cols = st.columns([3, 2, 3, 2])
+            for h, label in zip(header_cols, ["Recipe", "Type", "Category", "Cost (incl. GST)"]):
+                h.caption(label)
+            for r in results:
+                cost = db.compute_recipe_cost(r["id"])
+                cols = st.columns([3, 2, 3, 2])
+                with cols[0]:
+                    if st.button(r["name"], type="tertiary", key=f"search_recipe_{r['id']}"):
+                        st.session_state["edit_recipe_select"] = r["name"]
+                        st.session_state.recipe_active_category_id = r["category_id"]
+                        st.session_state.recipe_mode = "edit_recipe"
+                        st.rerun()
+                cols[1].write(r["type"])
+                cols[2].write(r["category_name"] or "-")
+                cols[3].write(f"${cost:.2f}")
+
+    elif st.session_state.recipe_mode == "categories":
         type_tabs = st.tabs(["Prep", "Dish", "Beverage"])
         for tab, rtype in zip(type_tabs, ["Prep", "Dish", "Beverage"]):
             with tab:
