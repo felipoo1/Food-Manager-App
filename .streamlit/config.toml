@@ -1,0 +1,28 @@
+# Cafe Manager — Theme
+# This file controls the entire visual style of the app: colors, fonts,
+# corner roundness, and borders. Streamlit reads this automatically —
+# there is no separate "settings page" to click through.
+
+[theme]
+# ---- Colors ----
+primaryColor = "#C1592C"            # Accent color (buttons, focus highlights) — terracotta/copper
+backgroundColor = "#FBF8F4"         # Main app background — warm milk-foam white
+secondaryBackgroundColor = "#F1E8DC" # Sidebar & card backgrounds — latte tone
+textColor = "#3A2E27"               # Body text — espresso brown (softer than pure black)
+linkColor = "#C1592C"               # Links match the accent color
+
+# ---- Typography ----
+font = "sans-serif"        # Body text — Source Sans, clean and highly readable
+headingFont = "serif"      # Headings — Source Serif, a bit of warmth/character
+baseFontSize = 17          # Slightly larger than default for quick glance-readability
+
+# ---- Shape & borders ----
+baseRadius = "medium"      # Rounded corners on cards, inputs, dataframes
+buttonRadius = "large"     # Buttons rounded a bit more — friendlier, more tappable
+borderColor = "#E3D5C3"    # Soft warm border color
+showWidgetBorder = true    # Show a subtle border on input fields even when not focused
+showSidebarBorder = true   # Clean vertical line between sidebar and main content
+
+[theme.sidebar]
+backgroundColor = "#F1E8DC"
+borderColor = "#E3D5C3"
