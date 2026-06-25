@@ -5,23 +5,86 @@ This file is the "filing cabinet" for the whole app.
 It defines what information we store (the tables) and
 gives every other page a simple way to read/write data
 without needing to know any SQL itself.
+
+This version connects to a real, persistent Postgres
+database (hosted on Supabase) instead of a local SQLite
+file -- so your data survives app restarts and redeploys.
 -------------------------------------------------------
 """
 
-import sqlite3
-import os
+import streamlit as st
+import psycopg2
+import psycopg2.extras
 from datetime import date, timedelta
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "cafe.db")
+
+# =========================================================
+# Compatibility layer
+# ---------------------------------------------------------
+# The rest of this app was written using SQLite-style code:
+#   conn.execute("SELECT ... WHERE x = ?", (value,)).fetchone()
+# Postgres (via psycopg2) normally needs a separate cursor and
+# uses %s instead of ? for placeholders. These two small wrapper
+# classes translate between the two styles automatically, so we
+# didn't have to rewrite every single query elsewhere in the app.
+# =========================================================
+
+class _CursorWrapper:
+    def __init__(self, real_cursor):
+        self._cur = real_cursor
+
+    def execute(self, query, params=None):
+        pg_query = query.replace("?", "%s")
+        if params is None:
+            self._cur.execute(pg_query)
+        else:
+            self._cur.execute(pg_query, params)
+        return self
+
+    def executemany(self, query, seq_of_params):
+        pg_query = query.replace("?", "%s")
+        self._cur.executemany(pg_query, seq_of_params)
+        return self
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    def __getattr__(self, name):
+        return getattr(self._cur, name)
+
+
+class _ConnWrapper:
+    def __init__(self, pg_conn):
+        self._conn = pg_conn
+
+    def cursor(self):
+        real_cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        return _CursorWrapper(real_cur)
+
+    def execute(self, query, params=()):
+        cur = self.cursor()
+        cur.execute(query, params)
+        return cur
+
+    def commit(self):
+        self._conn.commit()
+
+    def close(self):
+        self._conn.close()
 
 
 def get_connection():
-    """Opens a connection to the database file."""
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row  # lets us access columns by name
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    """Opens a connection to the Supabase Postgres database."""
+    pg_conn = psycopg2.connect(st.secrets["SUPABASE_DB_URL"])
+    return _ConnWrapper(pg_conn)
 
+
+# =========================================================
+# Schema
+# =========================================================
 
 def init_db():
     """Creates all tables if they don't already exist. Safe to run every time the app starts."""
@@ -30,7 +93,7 @@ def init_db():
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS suppliers (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             uen TEXT,
             email TEXT,
@@ -43,16 +106,16 @@ def init_db():
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS ingredients (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             category TEXT,
             primary_supplier_id INTEGER,
             backup_supplier_id INTEGER,
-            purchase_size_label TEXT,   -- e.g. "12kg bag" (just for display)
-            purchase_qty REAL,          -- e.g. 12000 (in base_unit)
-            base_unit TEXT,             -- g, ml, or each
-            purchase_price REAL,        -- price for the whole purchase_qty, GST-inclusive
-            recipe_unit_qty REAL,       -- e.g. 100 (the chunk size recipes use)
+            purchase_size_label TEXT,
+            purchase_qty REAL,
+            base_unit TEXT,
+            purchase_price REAL,
+            recipe_unit_qty REAL,
             last_updated TEXT,
             FOREIGN KEY (primary_supplier_id) REFERENCES suppliers(id),
             FOREIGN KEY (backup_supplier_id) REFERENCES suppliers(id)
@@ -61,22 +124,22 @@ def init_db():
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS recipes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
-            type TEXT NOT NULL,        -- 'Prep', 'Dish', or 'Beverage'
-            yield_qty REAL,            -- only used for Prep, e.g. 500
-            yield_unit TEXT,           -- only used for Prep, e.g. 'ml'
-            selling_price REAL         -- only used for Dish / Beverage
+            type TEXT NOT NULL,
+            yield_qty REAL,
+            yield_unit TEXT,
+            selling_price REAL
         )
     """)
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS recipe_lines (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             parent_recipe_id INTEGER NOT NULL,
-            ingredient_id INTEGER,     -- set if this line is a raw ingredient
-            sub_recipe_id INTEGER,     -- set if this line is a nested Prep recipe
-            quantity REAL NOT NULL,    -- amount used, in the component's base/yield unit
+            ingredient_id INTEGER,
+            sub_recipe_id INTEGER,
+            quantity REAL NOT NULL,
             FOREIGN KEY (parent_recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
             FOREIGN KEY (ingredient_id) REFERENCES ingredients(id),
             FOREIGN KEY (sub_recipe_id) REFERENCES recipes(id)
@@ -85,30 +148,17 @@ def init_db():
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS staff (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             name TEXT NOT NULL,
             pin TEXT NOT NULL UNIQUE,
-            role TEXT NOT NULL,            -- 'owner', 'manager', or 'staff'
-            is_shared_device INTEGER DEFAULT 0   -- 1 for the shop iPad's shared PIN
-        )
-    """)
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            section TEXT NOT NULL,         -- 'Kitchen' or 'Floor'
-            created_by TEXT,
-            created_at TEXT,
-            done INTEGER DEFAULT 0,
-            completed_by TEXT,
-            completed_at TEXT
+            role TEXT NOT NULL,
+            is_shared_device INTEGER DEFAULT 0
         )
     """)
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS invoice_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             scanned_at TEXT,
             supplier_name TEXT,
             ingredient_name TEXT,
@@ -121,13 +171,13 @@ def init_db():
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS task_definitions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             title TEXT NOT NULL,
-            section TEXT NOT NULL,         -- 'Kitchen' or 'Floor'
-            notes TEXT,                    -- multi-line instructions
-            recurrence TEXT NOT NULL,      -- 'weekly' or 'once'
-            day_of_week TEXT NOT NULL,     -- 'Monday'..'Sunday' (which day's box this shows in)
-            specific_date TEXT,            -- only set for 'once' tasks
+            section TEXT NOT NULL,
+            notes TEXT,
+            recurrence TEXT NOT NULL,
+            day_of_week TEXT NOT NULL,
+            specific_date TEXT,
             created_by TEXT,
             created_at TEXT
         )
@@ -135,31 +185,21 @@ def init_db():
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS task_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             task_id INTEGER NOT NULL,
-            week_start_date TEXT,          -- Monday's date of the week it was completed (weekly tasks)
+            week_start_date TEXT,
             completed_by TEXT,
             completed_at TEXT,
-            reverted INTEGER DEFAULT 0,    -- 1 if this completion was later undone
+            reverted INTEGER DEFAULT 0,
             reverted_by TEXT,
             reverted_at TEXT,
             FOREIGN KEY (task_id) REFERENCES task_definitions(id) ON DELETE CASCADE
         )
     """)
 
-    # Migration safety net: adds the revert-tracking columns to task_log if this
-    # database was created before they existed. Safe to run every time the app starts.
-    existing_cols = [r[1] for r in cur.execute("PRAGMA table_info(task_log)").fetchall()]
-    if "reverted" not in existing_cols:
-        cur.execute("ALTER TABLE task_log ADD COLUMN reverted INTEGER DEFAULT 0")
-    if "reverted_by" not in existing_cols:
-        cur.execute("ALTER TABLE task_log ADD COLUMN reverted_by TEXT")
-    if "reverted_at" not in existing_cols:
-        cur.execute("ALTER TABLE task_log ADD COLUMN reverted_at TEXT")
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS stock_takes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             ingredient_id INTEGER NOT NULL,
             count_date TEXT NOT NULL,
             quantity_counted REAL NOT NULL,
@@ -242,8 +282,6 @@ def compute_recipe_cost(recipe_id, conn=None, _visited=None):
         _visited = set()
 
     if recipe_id in _visited:
-        # Safety net: prevents an infinite loop if a recipe somehow
-        # references itself through a chain of Preps.
         if owns_conn:
             conn.close()
         return 0.0
@@ -367,7 +405,7 @@ def seed_starter_data():
     cur.execute("SELECT COUNT(*) AS c FROM suppliers")
     if cur.fetchone()["c"] > 0:
         conn.close()
-        return  # already has data, don't touch it
+        return
 
     suppliers = [
         ("Tong Seng Produce", "201512345A", "orders@tongseng.com.sg", "+65 9123 4567",
@@ -380,7 +418,6 @@ def seed_starter_data():
         VALUES (?, ?, ?, ?, ?, ?, ?)
     """, suppliers)
 
-    # Look up the IDs we just created so we can link ingredients to them
     cur.execute("SELECT id, name FROM suppliers")
     supplier_ids = {row["name"]: row["id"] for row in cur.fetchall()}
 

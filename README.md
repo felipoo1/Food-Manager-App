@@ -43,10 +43,14 @@ step 3 — step 2 is one-time only.
 
 ## Where your data is stored
 
-Everything you enter is saved in a single file called `cafe.db` that
-will appear in this same folder after you first run the app. This file
-IS your database — back it up occasionally (just copy the file
-somewhere safe) once you start relying on this day-to-day.
+Your data is stored in a real, persistent Postgres database hosted on
+**Supabase** (a free database hosting service) — not in a local file
+inside this folder anymore. This means your data survives app restarts
+and redeploys, unlike the original local-file setup.
+
+The app connects using a single secret, `SUPABASE_DB_URL`, set under
+your Streamlit app's Settings → Secrets. See the setup guide for how
+to get this connection string from your Supabase project.
 
 ## A note on running this without installing anything
 

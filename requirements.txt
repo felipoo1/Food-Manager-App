@@ -1,3 +1,4 @@
 streamlit
 pandas
 anthropic
+psycopg2-binary
