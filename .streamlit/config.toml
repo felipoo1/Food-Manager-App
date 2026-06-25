@@ -1,31 +1,34 @@
-# Cafe Manager — Theme
+# Cafe Manager — Theme: "Soft Friendly"
 # This file controls the entire visual style of the app: colors, fonts,
 # corner roundness, and borders. Streamlit reads this automatically —
 # there is no separate "settings page" to click through.
 
 [theme]
-# ---- Colors (main content area: light) ----
-primaryColor = "#F2722D"            # Accent color (buttons, focus, links) — vibrant orange
-backgroundColor = "#FFFFFF"         # Main app background — clean white
-secondaryBackgroundColor = "#F4F5F6" # Card/widget backgrounds — soft off-white gray
-textColor = "#16181D"               # Body text — near-black for strong title contrast
-linkColor = "#F2722D"
+# ---- Colors ----
+primaryColor = "#FF8C73"             # Accent color (buttons, links, focus) — soft coral
+backgroundColor = "#FFF8F0"          # Main app background — warm cream
+secondaryBackgroundColor = "#FDEAD7" # Cards & widget backgrounds — soft peach
+textColor = "#4A3F35"                # Body text — warm charcoal-brown, not harsh black
+linkColor = "#FF8C73"
 
 # ---- Typography ----
-font = "sans-serif"
-headingFont = "sans-serif"
+# Nunito is a genuinely rounded, friendly typeface (not just Streamlit's
+# default Source Sans) — this is what gives the "soft friendly" feel its
+# warmth. Falls back to a generic sans-serif if the font fails to load.
+font = "Nunito:https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,200..1000;1,200..1000, sans-serif"
+headingFont = "Nunito:https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,200..1000;1,200..1000, sans-serif"
 baseFontSize = 16
+baseFontWeight = 500                 # Slightly bolder than default — feels warmer, less thin/corporate
 
 # ---- Shape & borders ----
-baseRadius = "medium"       # Rounded corners on cards, inputs, dataframes
-buttonRadius = "medium"
-borderColor = "#E3E6E8"     # Thin light border for cards in the main content area
+baseRadius = "large"        # Generously rounded corners on cards, inputs, dataframes
+buttonRadius = "full"       # Fully pill-shaped buttons — the friendliest, most "tappable" look
+borderColor = "#F5DCC8"     # Soft pastel border color
 showWidgetBorder = true
 showSidebarBorder = true
 
-# ---- Sidebar (dark, independent of the main theme) ----
+# ---- Sidebar (now matching the main theme, fully cohesive) ----
 [theme.sidebar]
-backgroundColor = "#1B1E24"   # Deep charcoal — dark, not pure black
-secondaryBackgroundColor = "#23262D"
-textColor = "#E7E9EC"         # Off-white nav text
-borderColor = "#2E323A"       # Subtle dark border between sidebar and content
+backgroundColor = "#FDEAD7"   # Soft peach, same family as the main cards
+textColor = "#4A3F35"         # Same warm charcoal as main text
+borderColor = "#F5DCC8"
