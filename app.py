@@ -10,8 +10,35 @@ import streamlit as st
 import pandas as pd
 from datetime import date, datetime
 import database as db
+import base64
+from app_icon import ICON_BASE64
 
-st.set_page_config(page_title="Cafe Manager", layout="wide")
+st.set_page_config(page_title="Cafe Manager", layout="wide", page_icon="☕")
+
+# ---------- "Add to Home Screen" icon (iOS/Android) ----------
+# Streamlit doesn't officially expose the page's <head>, so this uses a
+# commonly-used workaround: injecting the relevant <link>/<meta> tags
+# directly. This usually works for getting a custom icon + standalone
+# (no browser bar) behavior when added to a phone/iPad home screen, but
+# I can't fully guarantee it across every iOS/Android version since I
+# can't test it live from here -- if "Add to Home Screen" doesn't pick up
+# the icon on your device, it'll just fall back to a plain screenshot icon,
+# nothing breaks either way.
+_manifest_json = (
+    '{"name":"Cafe Manager","short_name":"Cafe Manager","start_url":".",'
+    '"display":"standalone","background_color":"#FFF8F0","theme_color":"#FF8C73",'
+    f'"icons":[{{"src":"data:image/png;base64,{ICON_BASE64}","sizes":"512x512","type":"image/png"}}]}}'
+)
+_manifest_b64 = base64.b64encode(_manifest_json.encode()).decode()
+
+st.markdown(f"""
+<link rel="apple-touch-icon" href="data:image/png;base64,{ICON_BASE64}">
+<link rel="manifest" href="data:application/json;base64,{_manifest_b64}">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Cafe Manager">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#FF8C73">
+""", unsafe_allow_html=True)
 
 
 @st.cache_resource
@@ -44,10 +71,14 @@ _ensure_database_ready()
 st.markdown("""
 <style>
 input[maxlength="4"] {
-    font-size: 2.2rem !important;
+    font-size: 2.8rem !important;
     text-align: center !important;
-    height: 3.5rem !important;
-    letter-spacing: 0.6em !important;
+    height: 4.2rem !important;
+    width: 11rem !important;
+    letter-spacing: 0.5em !important;
+    box-sizing: border-box !important;
+    display: block !important;
+    margin: 0 auto !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -340,65 +371,66 @@ if page == "Tasks":
                         pending_key = f"{t['id']}-pending"
                         is_done, completed_by, completed_at, log_id = completions[t["id"]]
 
-                        row_cols = st.columns([5, 2])
-                        with row_cols[0]:
-                            title_col, badge_col = st.columns([5, 2])
-                            with title_col:
-                                if is_owner:
-                                    if st.button(t["title"], type="tertiary", key=f"task_title_{t['id']}"):
-                                        st.session_state["edit_task_select"] = f"[{t['day_of_week']} / {t['section']}] {t['title']}"
-                                        st.session_state.task_mode = "edit"
-                                        st.rerun()
-                                else:
-                                    st.write(t["title"])
-                            with badge_col:
-                                if t["recurrence"] == "once":
-                                    st.badge(f"One-off: {t['specific_date']}", color="gray")
-                                else:
-                                    st.badge("Weekly", color="orange")
-                            if t["notes"]:
-                                with st.expander("Notes"):
-                                    st.write(t["notes"])
+                        with st.container(border=True):
+                            row_cols = st.columns([5, 2])
+                            with row_cols[0]:
+                                title_col, badge_col = st.columns([5, 2])
+                                with title_col:
+                                    if is_owner:
+                                        if st.button(t["title"], type="tertiary", key=f"task_title_{t['id']}"):
+                                            st.session_state["edit_task_select"] = f"[{t['day_of_week']} / {t['section']}] {t['title']}"
+                                            st.session_state.task_mode = "edit"
+                                            st.rerun()
+                                    else:
+                                        st.write(t["title"])
+                                with badge_col:
+                                    if t["recurrence"] == "once":
+                                        st.badge(f"One-off: {t['specific_date']}", color="gray")
+                                    else:
+                                        st.badge("Weekly", color="orange")
+                                if t["notes"]:
+                                    with st.expander("Notes"):
+                                        st.write(t["notes"])
 
-                        with row_cols[1]:
-                            if is_done:
-                                st.success(f"✅ {completed_by} at {completed_at}")
-                                if st.button("Undo", key=f"undo_{t['id']}"):
-                                    conn.execute(
-                                        "UPDATE task_log SET reverted=1, reverted_by=?, reverted_at=? WHERE id=?",
-                                        (current_user["name"], datetime.now().strftime("%-I:%M %p"), log_id)
-                                    )
-                                    conn.commit()
-                                    st.rerun()
-                            elif st.session_state.pending_pin_task == pending_key:
-                                pin_try = pin_entry_boxes(f"task_pin_{t['id']}")
-                                confirm_col, cancel_col = st.columns(2)
-                                with confirm_col:
-                                    if st.button("Confirm", key=f"confirm_{t['id']}"):
-                                        if len(pin_try) < 4 or not pin_try.isdigit():
-                                            st.error("Please fill in all 4 digits.")
-                                        else:
-                                            staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_try,)).fetchone()
-                                            if staff_match is None:
-                                                st.error("PIN not recognized.")
-                                                clear_pin_boxes(f"task_pin_{t['id']}")
-                                            else:
-                                                week_val = db.get_week_start() if t["recurrence"] == "weekly" else None
-                                                conn.execute(
-                                                    "INSERT INTO task_log (task_id, week_start_date, completed_by, completed_at) VALUES (?, ?, ?, ?)",
-                                                    (t["id"], week_val, staff_match["name"], datetime.now().strftime("%-I:%M %p"))
-                                                )
-                                                conn.commit()
-                                                st.session_state.pending_pin_task = None
-                                                st.rerun()
-                                with cancel_col:
-                                    if st.button("Cancel", key=f"cancel_{t['id']}"):
-                                        st.session_state.pending_pin_task = None
+                            with row_cols[1]:
+                                if is_done:
+                                    st.success(f"✅ {completed_by} at {completed_at}")
+                                    if st.button("Undo", key=f"undo_{t['id']}"):
+                                        conn.execute(
+                                            "UPDATE task_log SET reverted=1, reverted_by=?, reverted_at=? WHERE id=?",
+                                            (current_user["name"], datetime.now().strftime("%-I:%M %p"), log_id)
+                                        )
+                                        conn.commit()
                                         st.rerun()
-                            else:
-                                if st.button("Mark complete", key=f"complete_{t['id']}"):
-                                    st.session_state.pending_pin_task = pending_key
-                                    st.rerun()
+                                elif st.session_state.pending_pin_task == pending_key:
+                                    pin_try = pin_entry_boxes(f"task_pin_{t['id']}")
+                                    confirm_col, cancel_col = st.columns(2)
+                                    with confirm_col:
+                                        if st.button("Confirm", key=f"confirm_{t['id']}"):
+                                            if len(pin_try) < 4 or not pin_try.isdigit():
+                                                st.error("Please fill in all 4 digits.")
+                                            else:
+                                                staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_try,)).fetchone()
+                                                if staff_match is None:
+                                                    st.error("PIN not recognized.")
+                                                    clear_pin_boxes(f"task_pin_{t['id']}")
+                                                else:
+                                                    week_val = db.get_week_start() if t["recurrence"] == "weekly" else None
+                                                    conn.execute(
+                                                        "INSERT INTO task_log (task_id, week_start_date, completed_by, completed_at) VALUES (?, ?, ?, ?)",
+                                                        (t["id"], week_val, staff_match["name"], datetime.now().strftime("%-I:%M %p"))
+                                                    )
+                                                    conn.commit()
+                                                    st.session_state.pending_pin_task = None
+                                                    st.rerun()
+                                    with cancel_col:
+                                        if st.button("Cancel", key=f"cancel_{t['id']}"):
+                                            st.session_state.pending_pin_task = None
+                                            st.rerun()
+                                else:
+                                    if st.button("Mark complete", key=f"complete_{t['id']}"):
+                                        st.session_state.pending_pin_task = pending_key
+                                        st.rerun()
                     conn.close()
             st.write("")
 
@@ -633,23 +665,20 @@ if page == "Master Stock List":
                 st.subheader(cat)
                 cat_rows = [r for r in ingredients if (r["category"] or "Uncategorised") == cat]
 
-                header_cols = st.columns([2, 2, 2, 2, 2, 2])
-                for h, label in zip(header_cols, ["Ingredient", "Primary supplier", "Purchase size", "Price (incl. GST)", "Recipe unit", "Cost / unit"]):
-                    h.caption(label)
-
                 for r in cat_rows:
                     cost = db.cost_per_recipe_unit(r)
-                    cols = st.columns([2, 2, 2, 2, 2, 2])
-                    with cols[0]:
-                        if st.button(r["name"], type="tertiary", key=f"ing_name_{r['id']}"):
-                            st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
-                            st.session_state.stock_mode = "edit"
-                            st.rerun()
-                    cols[1].write(r["primary_supplier_name"] or "-")
-                    cols[2].write(r["purchase_size_label"])
-                    cols[3].write(f"${r['purchase_price']:.2f}")
-                    cols[4].write(f"{r['recipe_unit_qty']:g}{r['base_unit']}")
-                    cols[5].write(f"${cost:.3f}")
+                    with st.container(border=True):
+                        cols = st.columns([2, 2, 2, 2, 2, 2])
+                        with cols[0]:
+                            if st.button(r["name"], type="tertiary", key=f"ing_name_{r['id']}"):
+                                st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
+                                st.session_state.stock_mode = "edit"
+                                st.rerun()
+                        cols[1].write(f"**Supplier:** {r['primary_supplier_name'] or '-'}")
+                        cols[2].write(f"**Size:** {r['purchase_size_label']}")
+                        cols[3].write(f"**Price:** ${r['purchase_price']:.2f}")
+                        cols[4].write(f"**Recipe unit:** {r['recipe_unit_qty']:g}{r['base_unit']}")
+                        cols[5].write(f"**Cost/unit:** ${cost:.3f}")
             st.caption("(Updated dates shown on the ingredient's own page.)")
 
     # ---------------- ADD VIEW ----------------
@@ -903,21 +932,19 @@ elif page == "Recipes":
             st.info(f"No recipes match \"{search_text}\".")
         else:
             st.caption(f"{len(results)} recipe(s) match \"{search_text}\" — click a name to edit it.")
-            header_cols = st.columns([3, 2, 3, 2])
-            for h, label in zip(header_cols, ["Recipe", "Type", "Category", "Cost (incl. GST)"]):
-                h.caption(label)
             for r in results:
                 cost = db.compute_recipe_cost(r["id"])
-                cols = st.columns([3, 2, 3, 2])
-                with cols[0]:
-                    if st.button(r["name"], type="tertiary", key=f"search_recipe_{r['id']}"):
-                        st.session_state["edit_recipe_select"] = r["name"]
-                        st.session_state.recipe_active_category_id = r["category_id"]
-                        st.session_state.recipe_mode = "edit_recipe"
-                        st.rerun()
-                cols[1].write(r["type"])
-                cols[2].write(r["category_name"] or "-")
-                cols[3].write(f"${cost:.2f}")
+                with st.container(border=True):
+                    cols = st.columns([3, 2, 3, 2])
+                    with cols[0]:
+                        if st.button(r["name"], type="tertiary", key=f"search_recipe_{r['id']}"):
+                            st.session_state["edit_recipe_select"] = r["name"]
+                            st.session_state.recipe_active_category_id = r["category_id"]
+                            st.session_state.recipe_mode = "edit_recipe"
+                            st.rerun()
+                    cols[1].write(f"**Type:** {r['type']}")
+                    cols[2].write(f"**Category:** {r['category_name'] or '-'}")
+                    cols[3].write(f"**Cost:** ${cost:.2f}")
 
     elif st.session_state.recipe_mode == "categories":
         type_tabs = st.tabs(["Prep", "Dish", "Beverage"])
@@ -1039,40 +1066,30 @@ elif page == "Recipes":
         if not recipes_in_cat:
             st.info("No recipes in this category yet. Click \"+ Add New Recipe\" above.")
         else:
-            if rtype == "Prep":
-                header_cols = st.columns([3, 2, 2, 2])
-                header_cols[1].caption("Yields")
-                header_cols[2].caption("Batch cost (incl. GST)")
-                header_cols[3].caption("Cost / unit")
-            else:
-                header_cols = st.columns([3, 2, 2, 2])
-                header_cols[1].caption("Total food cost (incl. GST)")
-                header_cols[2].caption("Food cost %")
-                header_cols[3].caption("Selling price (excl. GST)")
-
             for r in recipes_in_cat:
                 cost = db.compute_recipe_cost(r["id"])
-                cols = st.columns([3, 2, 2, 2])
-                with cols[0]:
-                    if st.button(r["name"], type="tertiary", key=f"recipe_name_{r['id']}"):
-                        st.session_state["edit_recipe_select"] = r["name"]
-                        st.session_state.recipe_mode = "edit_recipe"
-                        st.rerun()
-                if rtype == "Prep":
-                    cols[1].write(f"{r['yield_qty']:g}{r['yield_unit']}" if r["yield_qty"] else "-")
-                    cols[2].write(f"${cost:.2f}")
-                    cols[3].write(f"${cost / r['yield_qty']:.4f}" if r["yield_qty"] else "-")
-                else:
-                    cols[1].write(f"${cost:.2f}")
-                    if r["selling_price"]:
-                        pct = cost / r["selling_price"] * 100
-                        status = db.food_cost_status(pct)
-                        badge = {"ok": "🟢", "warning": "🟡", "alert": "🔴"}[status]
-                        cols[2].write(f"{badge} {pct:.1f}%")
-                        cols[3].write(f"${r['selling_price']:.2f}")
+                with st.container(border=True):
+                    cols = st.columns([3, 2, 2, 2])
+                    with cols[0]:
+                        if st.button(r["name"], type="tertiary", key=f"recipe_name_{r['id']}"):
+                            st.session_state["edit_recipe_select"] = r["name"]
+                            st.session_state.recipe_mode = "edit_recipe"
+                            st.rerun()
+                    if rtype == "Prep":
+                        cols[1].write(f"**Yields:** {r['yield_qty']:g}{r['yield_unit']}" if r["yield_qty"] else "**Yields:** -")
+                        cols[2].write(f"**Batch cost:** ${cost:.2f}")
+                        cols[3].write(f"**Cost/unit:** ${cost / r['yield_qty']:.4f}" if r["yield_qty"] else "**Cost/unit:** -")
                     else:
-                        cols[2].write("-")
-                        cols[3].write("No price set")
+                        cols[1].write(f"**Food cost:** ${cost:.2f}")
+                        if r["selling_price"]:
+                            pct = cost / r["selling_price"] * 100
+                            status = db.food_cost_status(pct)
+                            badge = {"ok": "🟢", "warning": "🟡", "alert": "🔴"}[status]
+                            cols[2].write(f"**Food cost %:** {badge} {pct:.1f}%")
+                            cols[3].write(f"**Selling price:** ${r['selling_price']:.2f}")
+                        else:
+                            cols[2].write("**Food cost %:** -")
+                            cols[3].write("**Selling price:** Not set")
 
     # ======================================================
     # EDIT CATEGORY
@@ -1493,20 +1510,17 @@ elif page == "Suppliers":
         if not suppliers:
             st.info("No suppliers yet. Click \"Add New Supplier\" above to add your first one.")
         else:
-            header_cols = st.columns([2, 2, 2, 2])
-            for h, label in zip(header_cols, ["Supplier", "Email", "Phone", "Payment terms"]):
-                h.caption(label)
-
             for s in suppliers:
-                cols = st.columns([2, 2, 2, 2])
-                with cols[0]:
-                    if st.button(s["name"], type="tertiary", key=f"supplier_name_{s['id']}"):
-                        st.session_state["edit_supplier_select"] = s["name"]
-                        st.session_state.supplier_mode = "edit"
-                        st.rerun()
-                cols[1].write(s["email"] or "-")
-                cols[2].write(s["phone"] or "-")
-                cols[3].write(s["payment_terms"] or "-")
+                with st.container(border=True):
+                    cols = st.columns([2, 2, 2, 2])
+                    with cols[0]:
+                        if st.button(s["name"], type="tertiary", key=f"supplier_name_{s['id']}"):
+                            st.session_state["edit_supplier_select"] = s["name"]
+                            st.session_state.supplier_mode = "edit"
+                            st.rerun()
+                    cols[1].write(f"**Email:** {s['email'] or '-'}")
+                    cols[2].write(f"**Phone:** {s['phone'] or '-'}")
+                    cols[3].write(f"**Terms:** {s['payment_terms'] or '-'}")
 
     # ---------------- ADD VIEW ----------------
     elif st.session_state.supplier_mode == "add":
@@ -1648,20 +1662,17 @@ elif page == "Staff":
     if st.session_state.staff_mode == "list":
         st.caption("Manage who can log in to this app. Click a name to edit it.")
 
-        header_cols = st.columns([2, 2, 2, 2])
-        for h, label in zip(header_cols, ["Name", "PIN", "Role", "Shared device?"]):
-            h.caption(label)
-
         for s in staff_rows:
-            cols = st.columns([2, 2, 2, 2])
-            with cols[0]:
-                if st.button(s["name"], type="tertiary", key=f"staff_name_{s['id']}"):
-                    st.session_state["edit_staff_select"] = f"{s['name']} ({s['role']})"
-                    st.session_state.staff_mode = "edit"
-                    st.rerun()
-            cols[1].write(s["pin"])
-            cols[2].write(s["role"])
-            cols[3].write("Yes" if s["is_shared_device"] else "No")
+            with st.container(border=True):
+                cols = st.columns([2, 2, 2, 2])
+                with cols[0]:
+                    if st.button(s["name"], type="tertiary", key=f"staff_name_{s['id']}"):
+                        st.session_state["edit_staff_select"] = f"{s['name']} ({s['role']})"
+                        st.session_state.staff_mode = "edit"
+                        st.rerun()
+                cols[1].write(f"**PIN:** {s['pin']}")
+                cols[2].write(f"**Role:** {s['role']}")
+                cols[3].write(f"**Shared device:** {'Yes' if s['is_shared_device'] else 'No'}")
 
     # ---------------- ADD VIEW ----------------
     elif st.session_state.staff_mode == "add":
