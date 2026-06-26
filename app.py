@@ -34,18 +34,20 @@ _ensure_database_ready()
 
 # ---------- PIN box sizing ----------
 # Targets the actual HTML attribute Streamlit sets for single-character
-# inputs (maxlength="1") rather than a fragile class name -- this is the
-# one attribute that's unique to our 4 PIN boxes and nothing else in the
-# app, so it can't accidentally affect any other text field.
+# ---------- PIN box sizing ----------
+# Targets the actual HTML attribute Streamlit sets for a 4-character input
+# (maxlength="4") rather than a fragile class name -- this is unique to our
+# PIN field and nothing else in the app, so it can't accidentally affect
+# any other text field.
 # Placed here (before the login gate) so it also applies to the login screen,
 # not just pages reached after logging in.
 st.markdown("""
 <style>
-input[maxlength="1"] {
+input[maxlength="4"] {
     font-size: 2.2rem !important;
     text-align: center !important;
     height: 3.5rem !important;
-    padding: 0 !important;
+    letter-spacing: 0.6em !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -53,37 +55,32 @@ input[maxlength="1"] {
 
 def pin_entry_boxes(key_prefix, prefill=None):
     """
-    Renders 4 small side-by-side single-digit boxes (instead of one long text
-    field) and returns whatever's been typed into them combined into a single
-    string. Note: Streamlit can't auto-jump to the next box as you type the
-    way native OTP inputs do -- you click or tab between boxes manually.
+    Renders ONE centered box you type all 4 digits into continuously -- no
+    clicking or tabbing between separate fields. The digits are spaced out
+    visually (via letter-spacing) so it still reads like 4 distinct slots.
+    Returns whatever's been typed, as a plain string.
 
     If `prefill` is given (e.g. an existing 4-digit PIN being edited) and the
-    boxes haven't been touched yet this session, they start pre-filled with
-    those digits instead of empty.
+    box hasn't been touched yet this session, it starts pre-filled instead
+    of empty.
     """
-    if prefill and len(prefill) == 4:
-        for i in range(4):
-            box_key = f"{key_prefix}_{i}"
-            if box_key not in st.session_state:
-                st.session_state[box_key] = prefill[i]
+    box_key = f"{key_prefix}_pin"
+    if prefill and len(prefill) == 4 and box_key not in st.session_state:
+        st.session_state[box_key] = prefill
 
-    box_cols = st.columns([1, 1, 1, 1, 4])
-    digits = []
-    for i in range(4):
-        with box_cols[i]:
-            d = st.text_input(
-                f"PIN digit {i + 1}", max_chars=1, type="password",
-                key=f"{key_prefix}_{i}", label_visibility="collapsed"
-            )
-            digits.append(d)
-    return "".join(digits)
+    left, mid, right = st.columns([1, 2, 1])
+    with mid:
+        value = st.text_input(
+            "PIN", max_chars=4, type="default",
+            key=box_key, label_visibility="collapsed",
+            placeholder="0000"
+        )
+    return value
 
 
 def clear_pin_boxes(key_prefix):
-    """Clears a set of 4 PIN boxes (e.g. after a wrong attempt) by resetting their session state."""
-    for i in range(4):
-        st.session_state[f"{key_prefix}_{i}"] = ""
+    """Clears a PIN box (e.g. after a wrong attempt) by resetting its session state."""
+    st.session_state[f"{key_prefix}_pin"] = ""
 
 
 # ---------- PIN login gate ----------
