@@ -212,6 +212,43 @@ def init_db():
     """)
 
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS orders (
+            id SERIAL PRIMARY KEY,
+            supplier_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'draft',  -- 'draft', 'sent', or 'error'
+            channel TEXT,                          -- 'whatsapp' or 'email', once chosen
+            created_by TEXT,
+            created_at TEXT,
+            sent_at TEXT,
+            error_message TEXT,
+            FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS order_lines (
+            id SERIAL PRIMARY KEY,
+            order_id INTEGER NOT NULL,
+            ingredient_id INTEGER NOT NULL,
+            quantity REAL NOT NULL,
+            FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+            FOREIGN KEY (ingredient_id) REFERENCES ingredients(id)
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS notifications (
+            id SERIAL PRIMARY KEY,
+            kind TEXT NOT NULL,        -- 'info' or 'error'
+            message TEXT NOT NULL,
+            order_id INTEGER,
+            created_at TEXT,
+            created_by TEXT,
+            FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+        )
+    """)
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS recipe_lines (
             id SERIAL PRIMARY KEY,
             parent_recipe_id INTEGER NOT NULL,
@@ -321,6 +358,119 @@ def upload_category_image(file_bytes, file_name, content_type):
     if response.status_code in (200, 201):
         return f"{project_url}/storage/v1/object/public/{bucket}/{path}"
     return None
+
+
+def build_order_message(order_id, conn=None):
+    """
+    Builds the plain-text order message for a given order: supplier name,
+    then each line as "Ingredient — quantity x purchase size".
+    """
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+
+    order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
+    supplier = conn.execute("SELECT * FROM suppliers WHERE id = ?", (order["supplier_id"],)).fetchone()
+    lines = conn.execute("""
+        SELECT ol.quantity, i.name, i.purchase_size_label
+        FROM order_lines ol
+        JOIN ingredients i ON ol.ingredient_id = i.id
+        WHERE ol.order_id = ?
+        ORDER BY i.name
+    """, (order_id,)).fetchall()
+
+    if owns_conn:
+        conn.close()
+
+    message_parts = [f"New order for {supplier['name']}:", ""]
+    for line in lines:
+        qty_display = f"{line['quantity']:g}"
+        message_parts.append(f"- {line['name']} — {qty_display} x {line['purchase_size_label']}")
+    message_parts.append("")
+    message_parts.append("Thank you!")
+    return "\n".join(message_parts)
+
+
+def build_whatsapp_link(phone, message):
+    """
+    Builds a wa.me 'click to chat' link with the message pre-filled.
+    This opens WhatsApp with the message ready to review and send --
+    it does NOT send automatically, since true automated WhatsApp sending
+    requires Meta's paid Business API and business verification.
+    Returns None if no usable phone number is given.
+    """
+    import urllib.parse
+    if not phone:
+        return None
+    digits_only = "".join(ch for ch in phone if ch.isdigit())
+    if not digits_only:
+        return None
+    encoded_message = urllib.parse.quote(message)
+    return f"https://wa.me/{digits_only}?text={encoded_message}"
+
+
+def send_order_email(to_email, subject, message):
+    """
+    Actually sends an email via Gmail's SMTP server, using an App Password
+    (not your real Gmail password -- a special password generated specifically
+    for this purpose, which is what Google requires for non-Google apps to
+    send mail through a Gmail account).
+
+    Requires GMAIL_ADDRESS and GMAIL_APP_PASSWORD in Streamlit secrets.
+    Returns (success: bool, error_message: str or None).
+    """
+    import smtplib
+    from email.mime.text import MIMEText
+
+    if "GMAIL_ADDRESS" not in st.secrets or "GMAIL_APP_PASSWORD" not in st.secrets:
+        return False, "Email sending isn't set up yet (missing GMAIL_ADDRESS / GMAIL_APP_PASSWORD secrets)."
+
+    sender = st.secrets["GMAIL_ADDRESS"]
+    app_password = st.secrets["GMAIL_APP_PASSWORD"]
+
+    msg = MIMEText(message)
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = to_email
+
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=20) as server:
+            server.starttls()
+            server.login(sender, app_password)
+            server.sendmail(sender, [to_email], msg.as_string())
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def build_mailto_link(email, subject, message):
+    """
+    Builds a mailto: link with subject and body pre-filled. Opens the
+    person's own email client with the message ready to review and send.
+    Returns None if no email address is given.
+    """
+    import urllib.parse
+    if not email:
+        return None
+    encoded_subject = urllib.parse.quote(subject)
+    encoded_body = urllib.parse.quote(message)
+    return f"mailto:{email}?subject={encoded_subject}&body={encoded_body}"
+
+
+def add_notification(kind, message, order_id=None, created_by=None, conn=None):
+    """Logs an entry to the shared notification feed (visible to everyone via the bell icon)."""
+    from datetime import datetime
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+    timestamp = datetime.now().strftime("%Y-%m-%d %-I:%M %p")
+    conn.execute(
+        "INSERT INTO notifications (kind, message, order_id, created_at, created_by) VALUES (?, ?, ?, ?, ?)",
+        (kind, message, order_id, timestamp, created_by)
+    )
+    conn.commit()
+    if owns_conn:
+        conn.close()
 
 
 def find_best_match(target_text, candidates):

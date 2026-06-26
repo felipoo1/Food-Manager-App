@@ -209,7 +209,7 @@ st.sidebar.markdown("##### Cafe Manager")
 st.sidebar.caption(f"Logged in as **{current_user['name']}** ({current_user['role']})")
 st.sidebar.write("")
 
-nav_options = ["Tasks", "Stock Take", "Master Stock List", "Recipes", "Suppliers"]
+nav_options = ["Tasks", "Stock Take", "Master Stock List", "Recipes", "Suppliers", "Orders"]
 if is_owner:
     nav_options.append("Task History")
     nav_options.append("Invoices")
@@ -227,6 +227,7 @@ NAV_ICONS = {
     "Master Stock List": ":material/inventory_2:",
     "Recipes": ":material/menu_book:",
     "Suppliers": ":material/local_shipping:",
+    "Orders": ":material/shopping_cart:",
     "Task History": ":material/history:",
     "Invoices": ":material/receipt_long:",
     "Staff": ":material/group:",
@@ -245,12 +246,48 @@ for option in nav_options:
 page = st.session_state.current_page
 
 st.sidebar.divider()
+
+conn = db.get_connection()
+notif_count = conn.execute("SELECT COUNT(*) AS c FROM notifications").fetchone()["c"]
+error_count = conn.execute("SELECT COUNT(*) AS c FROM notifications WHERE kind = 'error'").fetchone()["c"]
+conn.close()
+
+bell_label = f"🔔 Notifications ({notif_count})" if notif_count else "🔔 Notifications"
+if error_count:
+    bell_label = f"🔔 Notifications ({notif_count}) — ⚠️ {error_count} issue(s)"
+
+if st.sidebar.button(bell_label, width="stretch"):
+    st.session_state.show_notifications = not st.session_state.get("show_notifications", False)
+    st.rerun()
 if st.sidebar.button("Change my PIN", width="stretch"):
     st.session_state.show_change_pin = not st.session_state.get("show_change_pin", False)
     st.rerun()
 if st.sidebar.button("Log out", width="stretch"):
     st.session_state.current_user = None
     st.rerun()
+
+# ---------- Notifications panel (available to everyone) ----------
+if st.session_state.get("show_notifications"):
+    st.title("Notifications")
+    st.caption("Order activity and any errors, visible to everyone in the app.")
+
+    conn = db.get_connection()
+    notif_rows = conn.execute("SELECT * FROM notifications ORDER BY id DESC LIMIT 50").fetchall()
+    conn.close()
+
+    if not notif_rows:
+        st.info("No notifications yet.")
+    else:
+        for n in notif_rows:
+            if n["kind"] == "error":
+                st.error(f"**{n['created_at']}** — {n['message']}" + (f" _(by {n['created_by']})_" if n["created_by"] else ""))
+            else:
+                st.success(f"**{n['created_at']}** — {n['message']}" + (f" _(by {n['created_by']})_" if n["created_by"] else ""))
+
+    if st.button("Close"):
+        st.session_state.show_notifications = False
+        st.rerun()
+    st.stop()
 
 # ---------- Change My PIN (self-service, available to anyone logged in) ----------
 if st.session_state.get("show_change_pin"):
@@ -1627,6 +1664,212 @@ elif page == "Suppliers":
                     st.success(f"Deleted {s['name']}.")
                     st.session_state.supplier_mode = "list"
                     st.rerun()
+
+
+# =========================================================
+# PAGE: ORDERS
+# =========================================================
+elif page == "Orders":
+    if "order_mode" not in st.session_state:
+        st.session_state.order_mode = "list"
+
+    title_col, btn1 = st.columns([7, 2])
+    with title_col:
+        st.title("Orders")
+    with btn1:
+        if st.button("New Order", icon=":material/add:", type="primary", use_container_width=True):
+            st.session_state.order_mode = "new"
+            st.rerun()
+
+    if st.session_state.order_mode != "list":
+        if st.button("← Back to orders"):
+            st.session_state.order_mode = "list"
+            st.rerun()
+        st.write("")
+
+    # ---------------- LIST VIEW ----------------
+    if st.session_state.order_mode == "list":
+        st.caption("Past and pending orders to suppliers.")
+
+        conn = db.get_connection()
+        all_orders = conn.execute("""
+            SELECT o.*, s.name AS supplier_name
+            FROM orders o
+            JOIN suppliers s ON o.supplier_id = s.id
+            ORDER BY o.id DESC
+        """).fetchall()
+        conn.close()
+
+        if not all_orders:
+            st.info("No orders yet. Click \"New Order\" above to create one.")
+        else:
+            for o in all_orders:
+                with st.container(border=True):
+                    cols = st.columns([3, 2, 2, 2])
+                    cols[0].write(f"**{o['supplier_name']}**")
+                    status_badge = {"draft": ("gray", "Draft"), "sent": ("green", "Sent"), "error": ("red", "Error")}
+                    color, label = status_badge.get(o["status"], ("gray", o["status"]))
+                    with cols[1]:
+                        st.badge(label, color=color)
+                    cols[2].write(f"**Created:** {o['created_at']}")
+                    cols[3].write(f"**By:** {o['created_by']}")
+
+                    conn = db.get_connection()
+                    order_lines = conn.execute("""
+                        SELECT ol.quantity, i.name, i.purchase_size_label
+                        FROM order_lines ol JOIN ingredients i ON ol.ingredient_id = i.id
+                        WHERE ol.order_id = ?
+                    """, (o["id"],)).fetchall()
+                    conn.close()
+
+                    with st.expander(f"{len(order_lines)} item(s)"):
+                        for line in order_lines:
+                            st.write(f"- {line['name']} — {line['quantity']:g} x {line['purchase_size_label']}")
+
+                    if o["status"] == "error" and o["error_message"]:
+                        st.warning(f"Last attempt failed: {o['error_message']}")
+
+                    if o["status"] in ("draft", "error"):
+                        conn = db.get_connection()
+                        supplier = conn.execute("SELECT * FROM suppliers WHERE id = ?", (o["supplier_id"],)).fetchone()
+                        conn.close()
+                        message = db.build_order_message(o["id"])
+
+                        wa_link = db.build_whatsapp_link(supplier["phone"], message)
+                        email_subject = f"New order from Cafe Manager — {supplier['name']}"
+
+                        link_cols = st.columns(3)
+                        with link_cols[0]:
+                            if wa_link:
+                                st.link_button("Send via WhatsApp", wa_link, use_container_width=True)
+                            else:
+                                st.caption("No phone number on file for WhatsApp.")
+                            if st.button("Mark as sent (WhatsApp)", key=f"mark_sent_{o['id']}"):
+                                conn = db.get_connection()
+                                conn.execute(
+                                    "UPDATE orders SET status='sent', channel='whatsapp', sent_at=? WHERE id=?",
+                                    (date.today().isoformat(), o["id"])
+                                )
+                                conn.commit()
+                                db.add_notification(
+                                    "info", f"Order to {supplier['name']} marked as sent via WhatsApp.",
+                                    order_id=o["id"], created_by=current_user["name"], conn=conn
+                                )
+                                conn.close()
+                                st.success("Marked as sent.")
+                                st.rerun()
+                        with link_cols[1]:
+                            if supplier["email"]:
+                                if st.button("Send Email Now", key=f"send_email_{o['id']}", type="primary", use_container_width=True):
+                                    with st.spinner("Sending..."):
+                                        success, error = db.send_order_email(supplier["email"], email_subject, message)
+                                    conn = db.get_connection()
+                                    if success:
+                                        conn.execute(
+                                            "UPDATE orders SET status='sent', channel='email', sent_at=? WHERE id=?",
+                                            (date.today().isoformat(), o["id"])
+                                        )
+                                        conn.commit()
+                                        db.add_notification(
+                                            "info", f"Order emailed automatically to {supplier['name']} ({supplier['email']}).",
+                                            order_id=o["id"], created_by=current_user["name"], conn=conn
+                                        )
+                                        conn.close()
+                                        st.success(f"Email sent to {supplier['email']}.")
+                                        st.rerun()
+                                    else:
+                                        conn.execute(
+                                            "UPDATE orders SET status='error', error_message=? WHERE id=?",
+                                            (error, o["id"])
+                                        )
+                                        conn.commit()
+                                        db.add_notification(
+                                            "error", f"Email to {supplier['name']} failed: {error}",
+                                            order_id=o["id"], created_by=current_user["name"], conn=conn
+                                        )
+                                        conn.close()
+                                        st.error(f"Email failed: {error}")
+                                        st.rerun()
+                            else:
+                                st.caption("No email on file for this supplier.")
+
+                        if not wa_link and not supplier["email"]:
+                            st.error("This supplier has no phone number or email on file — add one via the Suppliers page before this order can be sent.")
+
+    # ---------------- NEW ORDER VIEW ----------------
+    elif st.session_state.order_mode == "new":
+        st.subheader("Create a new order")
+
+        conn = db.get_connection()
+        suppliers = conn.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
+        conn.close()
+
+        if not suppliers:
+            st.info("No suppliers yet — add one via the Suppliers page first.")
+        else:
+            supplier_labels = {s["name"]: s["id"] for s in suppliers}
+            chosen_supplier_name = st.selectbox("Supplier", list(supplier_labels.keys()))
+            chosen_supplier_id = supplier_labels[chosen_supplier_name]
+
+            conn = db.get_connection()
+            supplier_ingredients = conn.execute("""
+                SELECT * FROM ingredients
+                WHERE primary_supplier_id = ? OR backup_supplier_id = ?
+                ORDER BY name
+            """, (chosen_supplier_id, chosen_supplier_id)).fetchall()
+            conn.close()
+
+            if not supplier_ingredients:
+                st.warning(f"No ingredients are linked to {chosen_supplier_name} yet. Set this supplier as Primary or Backup on at least one ingredient first.")
+            else:
+                st.write(f"**Choose quantities to order from {chosen_supplier_name}:**")
+                order_qtys = {}
+                for ing in supplier_ingredients:
+                    order_qtys[ing["id"]] = st.number_input(
+                        f"{ing['name']} ({ing['purchase_size_label']})",
+                        min_value=0.0, step=1.0, key=f"order_qty_{ing['id']}"
+                    )
+
+                if st.button("Create order", type="primary"):
+                    chosen_lines = {iid: qty for iid, qty in order_qtys.items() if qty > 0}
+                    if not chosen_lines:
+                        st.error("Enter a quantity greater than zero for at least one item.")
+                    else:
+                        conn = db.get_connection()
+                        conn.execute(
+                            "INSERT INTO orders (supplier_id, status, created_by, created_at) VALUES (?, 'draft', ?, ?)",
+                            (chosen_supplier_id, current_user["name"], date.today().isoformat())
+                        )
+                        new_order = conn.execute(
+                            "SELECT id FROM orders WHERE supplier_id = ? ORDER BY id DESC LIMIT 1", (chosen_supplier_id,)
+                        ).fetchone()
+                        order_id = new_order["id"]
+                        for iid, qty in chosen_lines.items():
+                            conn.execute(
+                                "INSERT INTO order_lines (order_id, ingredient_id, quantity) VALUES (?, ?, ?)",
+                                (order_id, iid, qty)
+                            )
+                        conn.commit()
+
+                        supplier = conn.execute("SELECT * FROM suppliers WHERE id = ?", (chosen_supplier_id,)).fetchone()
+                        if not supplier["phone"] and not supplier["email"]:
+                            conn.execute("UPDATE orders SET status='error', error_message=? WHERE id=?",
+                                         ("No phone or email on file for this supplier.", order_id))
+                            conn.commit()
+                            db.add_notification(
+                                "error", f"Order to {supplier['name']} has no way to be sent — no phone or email on file.",
+                                order_id=order_id, created_by=current_user["name"], conn=conn
+                            )
+                        else:
+                            db.add_notification(
+                                "info", f"New order created for {supplier['name']} ({len(chosen_lines)} item(s)).",
+                                order_id=order_id, created_by=current_user["name"], conn=conn
+                            )
+                        conn.close()
+
+                        st.success(f"Order created for {chosen_supplier_name}.")
+                        st.session_state.order_mode = "list"
+                        st.rerun()
 
 
 # =========================================================
