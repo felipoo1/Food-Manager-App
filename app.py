@@ -47,7 +47,7 @@ st.markdown(f"""
 # process never fully restarts -- this is what prevents the exact bug where
 # new tables silently don't get created because a stale cached "already set
 # up" result from before the change was reused.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 @st.cache_resource
@@ -1728,7 +1728,7 @@ elif page == "Orders":
 
                     conn = db.get_connection()
                     order_lines = conn.execute("""
-                        SELECT ol.quantity, i.name, i.purchase_size_label
+                        SELECT ol.quantity, i.name, i.base_unit
                         FROM order_lines ol JOIN ingredients i ON ol.ingredient_id = i.id
                         WHERE ol.order_id = ?
                     """, (o["id"],)).fetchall()
@@ -1736,7 +1736,12 @@ elif page == "Orders":
 
                     with st.expander(f"{len(order_lines)} item(s)"):
                         for line in order_lines:
-                            st.write(f"- {line['name']} — {line['quantity']:g} x {line['purchase_size_label']}")
+                            display_unit, factor = db.get_order_unit(line["base_unit"])
+                            st.write(f"- {line['name']} — {line['quantity'] / factor:g} {display_unit}")
+                        if o["supplier_note"]:
+                            st.caption(f"Note to supplier: {o['supplier_note']}")
+                        if o["internal_note"]:
+                            st.caption(f"Internal note: {o['internal_note']}")
 
                     if o["status"] == "error" and o["error_message"]:
                         st.warning(f"Last attempt failed: {o['error_message']}")
@@ -1810,8 +1815,6 @@ elif page == "Orders":
 
     # ---------------- NEW ORDER VIEW ----------------
     elif st.session_state.order_mode == "new":
-        st.subheader("Create a new order")
-
         conn = db.get_connection()
         suppliers = conn.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
         conn.close()
@@ -1820,10 +1823,13 @@ elif page == "Orders":
             st.info("No suppliers yet — add one via the Suppliers page first.")
         else:
             supplier_labels = {s["name"]: s["id"] for s in suppliers}
-            chosen_supplier_name = st.selectbox("Supplier", list(supplier_labels.keys()))
+            chosen_supplier_name = st.selectbox("Supplier", list(supplier_labels.keys()), key="new_order_supplier")
             chosen_supplier_id = supplier_labels[chosen_supplier_name]
 
+            st.title(f"Order from {chosen_supplier_name}")
+
             conn = db.get_connection()
+            supplier_row = conn.execute("SELECT * FROM suppliers WHERE id = ?", (chosen_supplier_id,)).fetchone()
             supplier_ingredients = conn.execute("""
                 SELECT * FROM ingredients
                 WHERE primary_supplier_id = ? OR backup_supplier_id = ?
@@ -1831,26 +1837,102 @@ elif page == "Orders":
             """, (chosen_supplier_id, chosen_supplier_id)).fetchall()
             conn.close()
 
+            st.caption(f"📧 {supplier_row['email'] or 'No email on file'}  ·  📞 {supplier_row['phone'] or 'No phone on file'}")
+
             if not supplier_ingredients:
                 st.warning(f"No ingredients are linked to {chosen_supplier_name} yet. Set this supplier as Primary or Backup on at least one ingredient first.")
             else:
-                st.write(f"**Choose quantities to order from {chosen_supplier_name}:**")
-                order_qtys = {}
-                for ing in supplier_ingredients:
-                    order_qtys[ing["id"]] = st.number_input(
-                        f"{ing['name']} ({ing['purchase_size_label']})",
-                        min_value=0.0, step=1.0, key=f"order_qty_{ing['id']}"
-                    )
+                search_text = st.text_input("Search ingredients...", key="order_search", label_visibility="collapsed", placeholder="Search ingredients...")
+                visible_ingredients = [
+                    ing for ing in supplier_ingredients
+                    if not search_text.strip() or search_text.strip().lower() in ing["name"].lower()
+                ]
 
-                if st.button("Create order", type="primary"):
-                    chosen_lines = {iid: qty for iid, qty in order_qtys.items() if qty > 0}
+                running_total = 0.0
+                item_count = 0
+
+                for ing in visible_ingredients:
+                    display_unit, factor = db.get_order_unit(ing["base_unit"])
+                    cost_per_display_unit = (ing["purchase_price"] / ing["purchase_qty"]) * factor if ing["purchase_qty"] else 0
+
+                    with st.container(border=True):
+                        st.write(f"**{ing['name']}** ({display_unit})")
+                        st.caption(f"${cost_per_display_unit:.2f} per {display_unit}")
+
+                        last_stock = db.get_latest_stock_take_qty(ing["id"])
+                        last_stock_display = (last_stock / factor) if last_stock is not None else 0.0
+
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.number_input(
+                                "In Stock (reference only)", min_value=0.0, step=1.0,
+                                value=float(last_stock_display), key=f"order_instock_{ing['id']}"
+                            )
+                        with col2:
+                            qty_to_order = st.number_input(
+                                f"To Order ({display_unit})", min_value=0.0, step=1.0,
+                                key=f"order_qty_{ing['id']}"
+                            )
+
+                        if qty_to_order > 0:
+                            item_count += 1
+                            running_total += qty_to_order * cost_per_display_unit
+
+                supplier_note = st.text_area("Note for supplier (included in the message)", key="order_supplier_note")
+
+                st.write("")
+                summary_col1, summary_col2 = st.columns(2)
+                summary_col1.metric("Item count", item_count)
+                summary_col2.metric("Order total", f"${running_total:.2f}")
+
+                internal_note = st.text_area(
+                    "Internal note (not sent to supplier)",
+                    key="order_internal_note",
+                    help="Visible only inside this app, for your own team."
+                )
+
+                btn_col1, btn_col2, btn_col3 = st.columns(3)
+                with btn_col1:
+                    if st.button("Cancel", use_container_width=True):
+                        st.session_state.order_mode = "list"
+                        st.rerun()
+                with btn_col2:
+                    preview_clicked = st.button("Preview", use_container_width=True)
+                with btn_col3:
+                    create_clicked = st.button("Create Order", type="primary", use_container_width=True)
+
+                if preview_clicked:
+                    if item_count == 0:
+                        st.error("Enter a quantity greater than zero for at least one item to preview.")
+                    else:
+                        preview_lines = [f"New order for {chosen_supplier_name}:", ""]
+                        for ing in supplier_ingredients:
+                            qty = st.session_state.get(f"order_qty_{ing['id']}", 0)
+                            if qty and qty > 0:
+                                display_unit, _ = db.get_order_unit(ing["base_unit"])
+                                preview_lines.append(f"- {ing['name']} — {qty:g} {display_unit}")
+                        if supplier_note:
+                            preview_lines.append("")
+                            preview_lines.append(f"Note: {supplier_note}")
+                        preview_lines.append("")
+                        preview_lines.append("Thank you!")
+                        st.text_area("Message preview", "\n".join(preview_lines), height=200, disabled=True)
+
+                if create_clicked:
+                    chosen_lines = {}
+                    for ing in supplier_ingredients:
+                        qty = st.session_state.get(f"order_qty_{ing['id']}", 0)
+                        if qty and qty > 0:
+                            _, factor = db.get_order_unit(ing["base_unit"])
+                            chosen_lines[ing["id"]] = qty * factor  # store in base unit (g/ml/each)
+
                     if not chosen_lines:
                         st.error("Enter a quantity greater than zero for at least one item.")
                     else:
                         conn = db.get_connection()
                         conn.execute(
-                            "INSERT INTO orders (supplier_id, status, created_by, created_at) VALUES (?, 'draft', ?, ?)",
-                            (chosen_supplier_id, current_user["name"], date.today().isoformat())
+                            "INSERT INTO orders (supplier_id, status, supplier_note, internal_note, created_by, created_at) VALUES (?, 'draft', ?, ?, ?, ?)",
+                            (chosen_supplier_id, supplier_note or None, internal_note or None, current_user["name"], date.today().isoformat())
                         )
                         new_order = conn.execute(
                             "SELECT id FROM orders WHERE supplier_id = ? ORDER BY id DESC LIMIT 1", (chosen_supplier_id,)

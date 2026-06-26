@@ -217,6 +217,8 @@ def init_db():
             supplier_id INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'draft',  -- 'draft', 'sent', or 'error'
             channel TEXT,                          -- 'whatsapp' or 'email', once chosen
+            supplier_note TEXT,                    -- included in the message sent to the supplier
+            internal_note TEXT,                    -- for your own team only, never sent
             created_by TEXT,
             created_at TEXT,
             sent_at TEXT,
@@ -224,6 +226,9 @@ def init_db():
             FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
         )
     """)
+
+    _ensure_column("orders", "supplier_note", "TEXT")
+    _ensure_column("orders", "internal_note", "TEXT")
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS order_lines (
@@ -360,10 +365,45 @@ def upload_category_image(file_bytes, file_name, content_type):
     return None
 
 
+def get_latest_stock_take_qty(ingredient_id, conn=None):
+    """
+    Returns the most recently recorded stock take quantity for an ingredient
+    (in its base unit), or None if it's never been counted. Used to give a
+    helpful starting point for the 'In Stock' reference field when ordering.
+    """
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+    row = conn.execute(
+        "SELECT quantity_counted FROM stock_takes WHERE ingredient_id = ? ORDER BY count_date DESC, id DESC LIMIT 1",
+        (ingredient_id,)
+    ).fetchone()
+    if owns_conn:
+        conn.close()
+    return row["quantity_counted"] if row else None
+
+
+def get_order_unit(base_unit):
+    """
+    Maps an ingredient's storage base_unit (g/ml/each) to a friendlier
+    ordering unit (Kg/L/Unit), so staff order in sensible quantities like
+    "5 Kg" instead of "5000 g". Returns (display_unit_label, factor), where:
+        base_unit_quantity_stored = entered_order_quantity * factor
+    """
+    mapping = {
+        "g": ("Kg", 1000),
+        "ml": ("L", 1000),
+        "each": ("Unit", 1),
+    }
+    return mapping.get(base_unit, (base_unit, 1))
+
+
 def build_order_message(order_id, conn=None):
     """
     Builds the plain-text order message for a given order: supplier name,
-    then each line as "Ingredient — quantity x purchase size".
+    then each line as "Ingredient — quantity Kg/L/Unit", plus the supplier
+    note if one was added (the internal note is deliberately NOT included
+    here, since it's for your own team only).
     """
     owns_conn = conn is None
     if owns_conn:
@@ -372,7 +412,7 @@ def build_order_message(order_id, conn=None):
     order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
     supplier = conn.execute("SELECT * FROM suppliers WHERE id = ?", (order["supplier_id"],)).fetchone()
     lines = conn.execute("""
-        SELECT ol.quantity, i.name, i.purchase_size_label
+        SELECT ol.quantity, i.name, i.base_unit
         FROM order_lines ol
         JOIN ingredients i ON ol.ingredient_id = i.id
         WHERE ol.order_id = ?
@@ -384,8 +424,12 @@ def build_order_message(order_id, conn=None):
 
     message_parts = [f"New order for {supplier['name']}:", ""]
     for line in lines:
-        qty_display = f"{line['quantity']:g}"
-        message_parts.append(f"- {line['name']} — {qty_display} x {line['purchase_size_label']}")
+        display_unit, factor = get_order_unit(line["base_unit"])
+        display_qty = line["quantity"] / factor
+        message_parts.append(f"- {line['name']} — {display_qty:g} {display_unit}")
+    if order["supplier_note"]:
+        message_parts.append("")
+        message_parts.append(f"Note: {order['supplier_note']}")
     message_parts.append("")
     message_parts.append("Thank you!")
     return "\n".join(message_parts)
