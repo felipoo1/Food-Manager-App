@@ -41,14 +41,26 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 
+# Bump this number any time the database schema changes (new tables, new
+# columns, etc.). It's passed into the cached function below as an argument
+# specifically so that changing it forces a fresh run even if the app
+# process never fully restarts -- this is what prevents the exact bug where
+# new tables silently don't get created because a stale cached "already set
+# up" result from before the change was reused.
+SCHEMA_VERSION = 2
+
+
 @st.cache_resource
-def _ensure_database_ready():
+def _ensure_database_ready(schema_version):
     """
     Runs all one-time setup (create tables, seed starter data, migrations)
-    exactly ONCE per running app process, instead of on every single click.
-    Before this fix, init_db()'s ~10 tables and several schema checks were
-    silently re-running on every page switch -- this was likely the single
-    biggest cause of the app feeling slow to navigate.
+    once per running app process AND per schema_version, instead of on
+    every single click. Before the original version of this fix, init_db()'s
+    ~10 tables and several schema checks were silently re-running on every
+    page switch -- this was the single biggest cause of the app feeling slow
+    to navigate. The schema_version argument exists so that bumping it after
+    a schema change guarantees this actually re-runs, even if Streamlit
+    reuses a warm process instead of fully restarting.
     """
     db.init_db()
     db.seed_starter_data()
@@ -57,7 +69,7 @@ def _ensure_database_ready():
     return True
 
 
-_ensure_database_ready()
+_ensure_database_ready(SCHEMA_VERSION)
 
 # ---------- PIN box sizing ----------
 # Targets the actual HTML attribute Streamlit sets for single-character
