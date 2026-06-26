@@ -572,6 +572,37 @@ def get_task_completion(task, conn=None):
     return False, None, None, None
 
 
+def export_all_tables_to_excel():
+    """
+    Builds a single Excel workbook with one sheet per table, covering the
+    entire database. Returns the file as bytes, ready for a download button.
+    This also doubles as a real backup of your data, independent of whatever
+    Supabase's own backup settings are doing.
+    """
+    import io
+    import pandas as pd
+
+    tables = [
+        "suppliers", "ingredients", "recipe_categories", "recipes",
+        "recipe_lines", "recipe_conversions", "staff", "task_definitions",
+        "task_log", "stock_takes", "invoice_log",
+    ]
+
+    conn = get_connection()
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for table in tables:
+            rows = conn.execute(f"SELECT * FROM {table}").fetchall()
+            df = pd.DataFrame([dict(r) for r in rows]) if rows else pd.DataFrame()
+            # Excel sheet names can't exceed 31 characters
+            sheet_name = table[:31]
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+    conn.close()
+
+    output.seek(0)
+    return output.getvalue()
+
+
 def cost_per_recipe_unit(ingredient_row):
     """
     The core costing formula used everywhere in the app:

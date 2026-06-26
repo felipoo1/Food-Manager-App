@@ -186,6 +186,7 @@ if is_owner:
     nav_options.append("Task History")
     nav_options.append("Invoices")
     nav_options.append("Staff")
+    nav_options.append("Data Export")
 
 if "current_page" not in st.session_state:
     st.session_state.current_page = nav_options[0]
@@ -201,6 +202,7 @@ NAV_ICONS = {
     "Task History": ":material/history:",
     "Invoices": ":material/receipt_long:",
     "Staff": ":material/group:",
+    "Data Export": ":material/download:",
 }
 
 for option in nav_options:
@@ -1767,6 +1769,43 @@ elif page == "Staff":
                     st.success("Removed.")
                     st.session_state.staff_mode = "list"
                     st.rerun()
+
+
+# =========================================================
+# PAGE: DATA EXPORT  (owner only)
+# =========================================================
+elif page == "Data Export":
+    if not is_owner:
+        st.error("This page is restricted to the Owner account.")
+        st.stop()
+
+    st.title("Data export")
+    st.caption("Download everything in the app as a single Excel file — every table, on its own sheet.")
+
+    st.warning(
+        "⚠️ This file includes staff PIN codes in plain text (the Staff sheet). "
+        "Store and share it carefully — anyone with this file can see every login PIN."
+    )
+
+    st.write(
+        "This also works as a real backup of your data — useful given the app's database "
+        "lives on Supabase rather than this repository."
+    )
+
+    if st.button("Generate export", type="primary"):
+        with st.spinner("Building the export file..."):
+            file_bytes = db.export_all_tables_to_excel()
+        st.session_state["export_file_bytes"] = file_bytes
+        st.success("Export ready — click below to download.")
+
+    if "export_file_bytes" in st.session_state:
+        st.download_button(
+            "Download Excel export",
+            data=st.session_state["export_file_bytes"],
+            file_name=f"cafe_manager_export_{date.today().isoformat()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary",
+        )
 
 
 # =========================================================
