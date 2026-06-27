@@ -1,4 +1,3 @@
-
 """
 database.py
 -------------------------------------------------------
@@ -220,6 +219,7 @@ def init_db():
             channel TEXT,                          -- 'whatsapp' or 'email', once chosen
             supplier_note TEXT,                    -- included in the message sent to the supplier
             internal_note TEXT,                    -- for your own team only, never sent
+            delivery_date TEXT,                     -- requested delivery date, included in the message
             created_by TEXT,
             created_at TEXT,
             sent_at TEXT,
@@ -230,6 +230,7 @@ def init_db():
 
     _ensure_column("orders", "supplier_note", "TEXT")
     _ensure_column("orders", "internal_note", "TEXT")
+    _ensure_column("orders", "delivery_date", "TEXT")
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS order_lines (
@@ -424,6 +425,9 @@ def build_order_message(order_id, conn=None):
         conn.close()
 
     message_parts = [f"New order for {supplier['name']}:", ""]
+    if order["delivery_date"]:
+        message_parts.append(f"Requested delivery date: {order['delivery_date']}")
+        message_parts.append("")
     for line in lines:
         display_unit, factor = get_order_unit(line["base_unit"])
         display_qty = line["quantity"] / factor

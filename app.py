@@ -47,7 +47,7 @@ st.markdown(f"""
 # process never fully restarts -- this is what prevents the exact bug where
 # new tables silently don't get created because a stale cached "already set
 # up" result from before the change was reused.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 @st.cache_resource
@@ -717,71 +717,88 @@ if page == "Master Stock List":
                 for r in cat_rows:
                     cost = db.cost_per_recipe_unit(r)
                     with st.container(border=True):
-                        cols = st.columns([2, 2, 2, 2, 2, 2])
+                        cols = st.columns([2, 2, 3, 3])
                         with cols[0]:
                             if st.button(r["name"], type="tertiary", key=f"ing_name_{r['id']}"):
                                 st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
                                 st.session_state.stock_mode = "edit"
                                 st.rerun()
                         cols[1].write(f"**Supplier:** {r['primary_supplier_name'] or '-'}")
-                        cols[2].write(f"**Size:** {r['purchase_size_label']}")
-                        cols[3].write(f"**Price:** ${r['purchase_price']:.2f}")
-                        cols[4].write(f"**Recipe unit:** {r['recipe_unit_qty']:g}{r['base_unit']}")
-                        cols[5].write(f"**Cost/unit:** ${cost:.3f}")
+                        cols[2].write(f"**You pay:** ${r['purchase_price']:.2f} for {r['purchase_size_label']}")
+                        cols[3].write(f"**Recipes use it in:** {r['recipe_unit_qty']:g}{r['base_unit']} portions, costing ${cost:.3f} each")
             st.caption("(Updated dates shown on the ingredient's own page.)")
 
     # ---------------- ADD VIEW ----------------
     elif st.session_state.stock_mode == "add":
         st.subheader("Add a new ingredient")
         supplier_options = get_supplier_options()
+        UNIT_MAP = {"Kg": ("g", 1000), "g": ("g", 1), "L": ("ml", 1000), "ml": ("ml", 1), "Each": ("each", 1)}
 
-        with st.form("add_ingredient_form", clear_on_submit=True):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                name = st.text_input("Ingredient name")
-                category = st.text_input("Category (e.g. Dairy, Meat, Produce)")
-            with col2:
-                purchase_size_label = st.text_input("Purchase size label (e.g. '12kg bag')")
-                base_unit = st.selectbox("Base unit", ["g", "ml", "each"])
-                purchase_qty = st.number_input("Purchase quantity (in base unit)", min_value=0.0, step=1.0)
-            with col3:
-                purchase_price = st.number_input("Purchase price, GST-inclusive ($)", min_value=0.0, step=0.01)
-                recipe_unit_qty = st.number_input("Recipe unit size (e.g. 100 for '100g')", min_value=0.0, step=1.0, value=100.0)
+        name = st.text_input("Ingredient name", key="add_ing_name")
+        category = st.text_input("Category (e.g. Dairy, Meat, Produce)", key="add_ing_category")
 
-            col4, col5 = st.columns(2)
-            with col4:
-                primary_supplier_name = st.selectbox("Primary supplier", list(supplier_options.keys()))
-            with col5:
-                backup_supplier_name = st.selectbox("Backup supplier", list(supplier_options.keys()))
+        st.write("**How do you buy this from the supplier?**")
+        pc1, pc2, pc3 = st.columns(3)
+        with pc1:
+            pack_qty_input = st.number_input("Pack size", min_value=0.0, step=1.0, help="e.g. 12 for a 12kg bag", key="add_ing_pack_qty")
+        with pc2:
+            pack_unit_choice = st.selectbox("Pack unit", list(UNIT_MAP.keys()), key="add_ing_pack_unit")
+        with pc3:
+            container_word = st.text_input("Packaging word (optional)", placeholder="bag, tin, carton...", key="add_ing_container")
 
-            submitted = st.form_submit_button("Add ingredient")
+        base_unit, factor = UNIT_MAP[pack_unit_choice]
+        purchase_price = st.number_input(
+            "Total price you pay for ONE pack ($, incl. GST)", min_value=0.0, step=0.01, key="add_ing_price"
+        )
 
-            if submitted:
-                if not name:
-                    st.error("Please enter an ingredient name.")
-                elif purchase_qty <= 0 or purchase_price <= 0:
-                    st.error("Purchase quantity and price must be greater than zero.")
-                else:
-                    conn = db.get_connection()
-                    conn.execute("""
-                        INSERT INTO ingredients
-                            (name, category, primary_supplier_id, backup_supplier_id,
-                             purchase_size_label, purchase_qty, base_unit, purchase_price,
-                             recipe_unit_qty, last_updated)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        name, category,
-                        supplier_options[primary_supplier_name],
-                        supplier_options[backup_supplier_name],
-                        purchase_size_label, purchase_qty, base_unit, purchase_price,
-                        recipe_unit_qty, date.today().isoformat()
-                    ))
-                    conn.commit()
-                    conn.close()
-                    db.get_cached_ingredients_basic.clear()
-                    st.success(f"Added {name} to the master stock list.")
-                    st.session_state.stock_mode = "list"
-                    st.rerun()
+        if pack_qty_input > 0 and purchase_price > 0:
+            st.info(f"✓ That works out to **${purchase_price / pack_qty_input:.4f} per {pack_unit_choice}** — check this looks right before saving.")
+
+        st.write("**How much does one recipe usually use at a time?**")
+        default_portion = 1.0 if base_unit == "each" else 100.0
+        recipe_unit_qty = st.number_input(
+            f"Recipe portion size, in {base_unit}", min_value=0.0, step=1.0, value=default_portion,
+            help=f"e.g. {default_portion:g} if a recipe typically uses {default_portion:g}{base_unit} of this at a time",
+            key="add_ing_recipe_unit"
+        )
+        if pack_qty_input > 0 and purchase_price > 0 and recipe_unit_qty > 0:
+            cost_per_portion = (purchase_price / (pack_qty_input * factor)) * recipe_unit_qty
+            st.caption(f"= ${cost_per_portion:.4f} per {recipe_unit_qty:g}{base_unit} recipe portion")
+
+        col4, col5 = st.columns(2)
+        with col4:
+            primary_supplier_name = st.selectbox("Primary supplier", list(supplier_options.keys()), key="add_ing_primary_sup")
+        with col5:
+            backup_supplier_name = st.selectbox("Backup supplier", list(supplier_options.keys()), key="add_ing_backup_sup")
+
+        if st.button("Add ingredient", type="primary"):
+            if not name:
+                st.error("Please enter an ingredient name.")
+            elif pack_qty_input <= 0 or purchase_price <= 0:
+                st.error("Pack size and price must be greater than zero.")
+            else:
+                purchase_qty = pack_qty_input * factor
+                purchase_size_label = f"{pack_qty_input:g}{pack_unit_choice}" + (f" {container_word}" if container_word else "")
+                conn = db.get_connection()
+                conn.execute("""
+                    INSERT INTO ingredients
+                        (name, category, primary_supplier_id, backup_supplier_id,
+                         purchase_size_label, purchase_qty, base_unit, purchase_price,
+                         recipe_unit_qty, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    name, category,
+                    supplier_options[primary_supplier_name],
+                    supplier_options[backup_supplier_name],
+                    purchase_size_label, purchase_qty, base_unit, purchase_price,
+                    recipe_unit_qty, date.today().isoformat()
+                ))
+                conn.commit()
+                conn.close()
+                db.get_cached_ingredients_basic.clear()
+                st.success(f"Added {name} to the master stock list.")
+                st.session_state.stock_mode = "list"
+                st.rerun()
 
     # ---------------- EDIT VIEW (Update + Delete both live here) ----------------
     elif st.session_state.stock_mode == "edit":
@@ -811,72 +828,101 @@ if page == "Master Stock List":
                         return k
                 return "-- none --"
 
-            unit_choices = ["g", "ml", "each"]
+            UNIT_MAP = {"Kg": ("g", 1000), "g": ("g", 1), "L": ("ml", 1000), "ml": ("ml", 1), "Each": ("each", 1)}
 
-            with st.form(f"edit_ingredient_form_{selected_id}"):
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    e_name = st.text_input("Ingredient name", value=current["name"])
-                    e_category = st.text_input("Category", value=current["category"] or "")
-                with col2:
-                    e_size_label = st.text_input("Purchase size label", value=current["purchase_size_label"] or "")
-                    e_base_unit = st.selectbox(
-                        "Base unit", unit_choices,
-                        index=unit_choices.index(current["base_unit"]) if current["base_unit"] in unit_choices else 0
-                    )
-                    e_purchase_qty = st.number_input(
-                        "Purchase quantity (in base unit)", min_value=0.0, step=1.0,
-                        value=float(current["purchase_qty"] or 0)
-                    )
-                with col3:
-                    e_purchase_price = st.number_input(
-                        "Purchase price, GST-inclusive ($)", min_value=0.0, step=0.01,
-                        value=float(current["purchase_price"] or 0)
-                    )
-                    e_recipe_unit_qty = st.number_input(
-                        "Recipe unit size", min_value=0.0, step=1.0,
-                        value=float(current["recipe_unit_qty"] or 100)
-                    )
+            # Pick a sensible default display unit + pack quantity for editing,
+            # based on what's actually stored (e.g. 12000g displays as 12 Kg).
+            def _default_pack_display(stored_base_unit, stored_qty):
+                if stored_base_unit == "g":
+                    return ("Kg", stored_qty / 1000) if stored_qty >= 1000 else ("g", stored_qty)
+                if stored_base_unit == "ml":
+                    return ("L", stored_qty / 1000) if stored_qty >= 1000 else ("ml", stored_qty)
+                return ("Each", stored_qty)
 
-                col4, col5 = st.columns(2)
-                with col4:
-                    e_primary = st.selectbox(
-                        "Primary supplier", supplier_keys,
-                        index=supplier_keys.index(_key_for_supplier_id(current["primary_supplier_id"]))
-                    )
-                with col5:
-                    e_backup = st.selectbox(
-                        "Backup supplier", supplier_keys,
-                        index=supplier_keys.index(_key_for_supplier_id(current["backup_supplier_id"]))
-                    )
+            default_unit, default_pack_qty = _default_pack_display(current["base_unit"], current["purchase_qty"] or 0)
 
-                update_submitted = st.form_submit_button("Update ingredient")
+            e_name = st.text_input("Ingredient name", value=current["name"], key=f"edit_ing_name_{selected_id}")
+            e_category = st.text_input("Category", value=current["category"] or "", key=f"edit_ing_category_{selected_id}")
 
-                if update_submitted:
-                    if not e_name:
-                        st.error("Ingredient name can't be empty.")
-                    elif e_purchase_qty <= 0 or e_purchase_price <= 0:
-                        st.error("Purchase quantity and price must be greater than zero.")
-                    else:
-                        conn = db.get_connection()
-                        conn.execute("""
-                            UPDATE ingredients
-                            SET name=?, category=?, primary_supplier_id=?, backup_supplier_id=?,
-                                purchase_size_label=?, purchase_qty=?, base_unit=?, purchase_price=?,
-                                recipe_unit_qty=?, last_updated=?
-                            WHERE id=?
-                        """, (
-                            e_name, e_category,
-                            supplier_options[e_primary], supplier_options[e_backup],
-                            e_size_label, e_purchase_qty, e_base_unit, e_purchase_price,
-                            e_recipe_unit_qty, date.today().isoformat(), selected_id
-                        ))
-                        conn.commit()
-                        conn.close()
-                        db.get_cached_ingredients_basic.clear()
-                        st.success(f"Updated {e_name}.")
-                        st.session_state.stock_mode = "list"
-                        st.rerun()
+            st.write("**How do you buy this from the supplier?**")
+            pc1, pc2, pc3 = st.columns(3)
+            with pc1:
+                e_pack_qty_input = st.number_input(
+                    "Pack size", min_value=0.0, step=1.0, value=float(default_pack_qty), key=f"edit_ing_pack_qty_{selected_id}"
+                )
+            with pc2:
+                unit_keys = list(UNIT_MAP.keys())
+                e_pack_unit_choice = st.selectbox(
+                    "Pack unit", unit_keys, index=unit_keys.index(default_unit), key=f"edit_ing_pack_unit_{selected_id}"
+                )
+            with pc3:
+                # Best-effort extraction of the packaging word from the existing label (e.g. "12kg bag" -> "bag")
+                existing_words = (current["purchase_size_label"] or "").split()
+                guessed_container = existing_words[-1] if len(existing_words) > 1 else ""
+                e_container_word = st.text_input(
+                    "Packaging word (optional)", value=guessed_container, placeholder="bag, tin, carton...",
+                    key=f"edit_ing_container_{selected_id}"
+                )
+
+            e_base_unit, e_factor = UNIT_MAP[e_pack_unit_choice]
+            e_purchase_price = st.number_input(
+                "Total price you pay for ONE pack ($, incl. GST)", min_value=0.0, step=0.01,
+                value=float(current["purchase_price"] or 0), key=f"edit_ing_price_{selected_id}"
+            )
+
+            if e_pack_qty_input > 0 and e_purchase_price > 0:
+                st.info(f"✓ That works out to **${e_purchase_price / e_pack_qty_input:.4f} per {e_pack_unit_choice}** — check this looks right before saving.")
+
+            st.write("**How much does one recipe usually use at a time?**")
+            e_recipe_unit_qty = st.number_input(
+                f"Recipe portion size, in {e_base_unit}", min_value=0.0, step=1.0,
+                value=float(current["recipe_unit_qty"] or 100), key=f"edit_ing_recipe_unit_{selected_id}"
+            )
+            if e_pack_qty_input > 0 and e_purchase_price > 0 and e_recipe_unit_qty > 0:
+                cost_per_portion = (e_purchase_price / (e_pack_qty_input * e_factor)) * e_recipe_unit_qty
+                st.caption(f"= ${cost_per_portion:.4f} per {e_recipe_unit_qty:g}{e_base_unit} recipe portion")
+
+            col4, col5 = st.columns(2)
+            with col4:
+                e_primary = st.selectbox(
+                    "Primary supplier", supplier_keys,
+                    index=supplier_keys.index(_key_for_supplier_id(current["primary_supplier_id"])),
+                    key=f"edit_ing_primary_{selected_id}"
+                )
+            with col5:
+                e_backup = st.selectbox(
+                    "Backup supplier", supplier_keys,
+                    index=supplier_keys.index(_key_for_supplier_id(current["backup_supplier_id"])),
+                    key=f"edit_ing_backup_{selected_id}"
+                )
+
+            if st.button("Update ingredient", type="primary", key=f"update_ing_btn_{selected_id}"):
+                if not e_name:
+                    st.error("Ingredient name can't be empty.")
+                elif e_pack_qty_input <= 0 or e_purchase_price <= 0:
+                    st.error("Pack size and price must be greater than zero.")
+                else:
+                    e_purchase_qty = e_pack_qty_input * e_factor
+                    e_size_label = f"{e_pack_qty_input:g}{e_pack_unit_choice}" + (f" {e_container_word}" if e_container_word else "")
+                    conn = db.get_connection()
+                    conn.execute("""
+                        UPDATE ingredients
+                        SET name=?, category=?, primary_supplier_id=?, backup_supplier_id=?,
+                            purchase_size_label=?, purchase_qty=?, base_unit=?, purchase_price=?,
+                            recipe_unit_qty=?, last_updated=?
+                        WHERE id=?
+                    """, (
+                        e_name, e_category,
+                        supplier_options[e_primary], supplier_options[e_backup],
+                        e_size_label, e_purchase_qty, e_base_unit, e_purchase_price,
+                        e_recipe_unit_qty, date.today().isoformat(), selected_id
+                    ))
+                    conn.commit()
+                    conn.close()
+                    db.get_cached_ingredients_basic.clear()
+                    st.success(f"Updated {e_name}.")
+                    st.session_state.stock_mode = "list"
+                    st.rerun()
 
             st.write("")
             st.write("**Delete this ingredient**")
@@ -1717,14 +1763,15 @@ elif page == "Orders":
         else:
             for o in all_orders:
                 with st.container(border=True):
-                    cols = st.columns([3, 2, 2, 2])
+                    cols = st.columns([3, 2, 2, 2, 2])
                     cols[0].write(f"**{o['supplier_name']}**")
                     status_badge = {"draft": ("gray", "Draft"), "sent": ("green", "Sent"), "error": ("red", "Error")}
                     color, label = status_badge.get(o["status"], ("gray", o["status"]))
                     with cols[1]:
                         st.badge(label, color=color)
-                    cols[2].write(f"**Created:** {o['created_at']}")
-                    cols[3].write(f"**By:** {o['created_by']}")
+                    cols[2].write(f"**Delivery:** {o['delivery_date'] or 'Not set'}")
+                    cols[3].write(f"**Created:** {o['created_at']}")
+                    cols[4].write(f"**By:** {o['created_by']}")
 
                     conn = db.get_connection()
                     order_lines = conn.execute("""
@@ -1878,6 +1925,7 @@ elif page == "Orders":
                             item_count += 1
                             running_total += qty_to_order * cost_per_display_unit
 
+                delivery_date = st.date_input("Requested delivery date", value=None, key="order_delivery_date")
                 supplier_note = st.text_area("Note for supplier (included in the message)", key="order_supplier_note")
 
                 st.write("")
@@ -1906,6 +1954,9 @@ elif page == "Orders":
                         st.error("Enter a quantity greater than zero for at least one item to preview.")
                     else:
                         preview_lines = [f"New order for {chosen_supplier_name}:", ""]
+                        if delivery_date:
+                            preview_lines.append(f"Requested delivery date: {delivery_date.isoformat()}")
+                            preview_lines.append("")
                         for ing in supplier_ingredients:
                             qty = st.session_state.get(f"order_qty_{ing['id']}", 0)
                             if qty and qty > 0:
@@ -1931,8 +1982,9 @@ elif page == "Orders":
                     else:
                         conn = db.get_connection()
                         conn.execute(
-                            "INSERT INTO orders (supplier_id, status, supplier_note, internal_note, created_by, created_at) VALUES (?, 'draft', ?, ?, ?, ?)",
-                            (chosen_supplier_id, supplier_note or None, internal_note or None, current_user["name"], date.today().isoformat())
+                            "INSERT INTO orders (supplier_id, status, supplier_note, internal_note, delivery_date, created_by, created_at) VALUES (?, 'draft', ?, ?, ?, ?, ?)",
+                            (chosen_supplier_id, supplier_note or None, internal_note or None,
+                             delivery_date.isoformat() if delivery_date else None, current_user["name"], date.today().isoformat())
                         )
                         new_order = conn.execute(
                             "SELECT id FROM orders WHERE supplier_id = ? ORDER BY id DESC LIMIT 1", (chosen_supplier_id,)
