@@ -47,7 +47,7 @@ st.markdown(f"""
 # process never fully restarts -- this is what prevents the exact bug where
 # new tables silently don't get created because a stale cached "already set
 # up" result from before the change was reused.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 @st.cache_resource
@@ -260,41 +260,47 @@ page = st.session_state.current_page
 st.sidebar.divider()
 
 conn = db.get_connection()
-notif_count = conn.execute("SELECT COUNT(*) AS c FROM notifications").fetchone()["c"]
-error_count = conn.execute("SELECT COUNT(*) AS c FROM notifications WHERE kind = 'error'").fetchone()["c"]
+notif_count = conn.execute("SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0").fetchone()["c"]
+error_count = conn.execute("SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0 AND kind = 'error'").fetchone()["c"]
 conn.close()
 
-bell_label = f"🔔 Notifications ({notif_count})" if notif_count else "🔔 Notifications"
+bell_label = f"Notifications ({notif_count})" if notif_count else "Notifications"
 if error_count:
-    bell_label = f"🔔 Notifications ({notif_count}) — ⚠️ {error_count} issue(s)"
+    bell_label = f"Notifications ({notif_count}) — ⚠️ {error_count} issue(s)"
 
-if st.sidebar.button(bell_label, width="stretch"):
+if st.sidebar.button(bell_label, icon=":material/notifications:", type="tertiary", width="stretch"):
     st.session_state.show_notifications = not st.session_state.get("show_notifications", False)
     st.rerun()
-if st.sidebar.button("Change my PIN", width="stretch"):
+if st.sidebar.button("Change my PIN", icon=":material/lock_reset:", type="tertiary", width="stretch"):
     st.session_state.show_change_pin = not st.session_state.get("show_change_pin", False)
     st.rerun()
-if st.sidebar.button("Log out", width="stretch"):
+if st.sidebar.button("Log out", icon=":material/logout:", type="tertiary", width="stretch"):
     st.session_state.current_user = None
     st.rerun()
 
 # ---------- Notifications panel (available to everyone) ----------
 if st.session_state.get("show_notifications"):
     st.title("Notifications")
-    st.caption("Order activity and any errors, visible to everyone in the app.")
+    st.caption("Order activity and any errors, visible to everyone in the app. Viewing this clears the alert badge — only new activity since your last visit will show up there again.")
 
     conn = db.get_connection()
     notif_rows = conn.execute("SELECT * FROM notifications ORDER BY id DESC LIMIT 50").fetchall()
+    unread_ids = {r["id"] for r in notif_rows if not r["is_read"]}
     conn.close()
+
+    if unread_ids:
+        db.mark_all_notifications_read()
 
     if not notif_rows:
         st.info("No notifications yet.")
     else:
         for n in notif_rows:
+            prefix = "🆕 " if n["id"] in unread_ids else ""
+            text = f"{prefix}**{n['created_at']}** — {n['message']}" + (f" _(by {n['created_by']})_" if n["created_by"] else "")
             if n["kind"] == "error":
-                st.error(f"**{n['created_at']}** — {n['message']}" + (f" _(by {n['created_by']})_" if n["created_by"] else ""))
+                st.error(text)
             else:
-                st.success(f"**{n['created_at']}** — {n['message']}" + (f" _(by {n['created_by']})_" if n["created_by"] else ""))
+                st.success(text)
 
     if st.button("Close"):
         st.session_state.show_notifications = False

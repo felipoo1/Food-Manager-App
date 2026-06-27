@@ -251,9 +251,12 @@ def init_db():
             order_id INTEGER,
             created_at TEXT,
             created_by TEXT,
+            is_read INTEGER DEFAULT 0, -- 0 = unread (still counts in the bell), 1 = read
             FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
         )
     """)
+
+    _ensure_column("notifications", "is_read", "INTEGER DEFAULT 0")
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS recipe_lines (
@@ -520,6 +523,19 @@ def add_notification(kind, message, order_id=None, created_by=None, conn=None):
     conn.commit()
     if owns_conn:
         conn.close()
+
+
+def mark_all_notifications_read():
+    """
+    Marks every notification as read, so they stop counting toward the bell
+    icon's badge. Called the moment someone opens the notifications panel --
+    only genuinely NEW notifications (created since the last time anyone
+    viewed the panel) should show up as an active alert.
+    """
+    conn = get_connection()
+    conn.execute("UPDATE notifications SET is_read = 1 WHERE is_read = 0")
+    conn.commit()
+    conn.close()
 
 
 def find_best_match(target_text, candidates):
