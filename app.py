@@ -47,7 +47,7 @@ st.markdown(f"""
 # process never fully restarts -- this is what prevents the exact bug where
 # new tables silently don't get created because a stale cached "already set
 # up" result from before the change was reused.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 @st.cache_resource
@@ -635,14 +635,48 @@ elif page == "Stock Take":
                 conn = db.get_connection()
                 # Resubmitting the same date overwrites that date's counts, rather than duplicating them
                 conn.execute("DELETE FROM stock_takes WHERE count_date = ?", (count_date.isoformat(),))
+
+                flagged_items = []
                 for ingredient_id, qty in entered_values.items():
-                    conn.execute(
-                        "INSERT INTO stock_takes (ingredient_id, count_date, quantity_counted, counted_by) VALUES (?, ?, ?, ?)",
-                        (ingredient_id, count_date.isoformat(), qty, current_user["name"])
-                    )
+                    ing = conn.execute("SELECT * FROM ingredients WHERE id = ?", (ingredient_id,)).fetchone()
+                    expected = ing["current_stock_qty"]  # None if this ingredient has never been counted/initialized
+                    variance = None
+                    is_flagged = 0
+                    if expected is not None:
+                        variance = qty - expected
+                        tolerance = db.get_variance_tolerance(ing["base_unit"])
+                        if abs(variance) > tolerance:
+                            is_flagged = 1
+                            flagged_items.append((ing["name"], expected, qty, variance, ing["base_unit"]))
+
+                    conn.execute("""
+                        INSERT INTO stock_takes
+                            (ingredient_id, count_date, quantity_counted, counted_by, expected_qty_before, variance, is_flagged)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (ingredient_id, count_date.isoformat(), qty, current_user["name"], expected, variance, is_flagged))
+
+                    # Recalibrate the running balance to match what staff actually counted —
+                    # this becomes the new "expected" baseline until the next stock take.
+                    conn.execute("UPDATE ingredients SET current_stock_qty = ? WHERE id = ?", (qty, ingredient_id))
+
                 conn.commit()
+
+                if flagged_items:
+                    detail_str = "; ".join(
+                        f"{name} (expected {exp:g}{u}, counted {cnt:g}{u}, {var:+g}{u})"
+                        for name, exp, cnt, var, u in flagged_items
+                    )
+                    db.add_notification(
+                        "error",
+                        f"Stock take on {count_date.isoformat()} flagged {len(flagged_items)} item(s) beyond tolerance: {detail_str}",
+                        created_by=current_user["name"], conn=conn
+                    )
                 conn.close()
-                st.success(f"Stock take for {count_date.isoformat()} saved.")
+
+                if flagged_items:
+                    st.warning(f"Stock take saved, but {len(flagged_items)} item(s) varied beyond the expected tolerance (±1kg/±1L/±1 unit) — check Notifications for details.")
+                else:
+                    st.success(f"Stock take for {count_date.isoformat()} saved.")
                 st.rerun()
 
     st.divider()
@@ -660,7 +694,8 @@ elif page == "Stock Take":
         chosen_date = st.selectbox("Choose a date", past_dates)
         conn = db.get_connection()
         history_rows = conn.execute("""
-            SELECT i.name, i.category, i.base_unit, st.quantity_counted, st.counted_by
+            SELECT i.name, i.category, i.base_unit, st.quantity_counted, st.counted_by,
+                   st.expected_qty_before, st.variance, st.is_flagged
             FROM stock_takes st
             JOIN ingredients i ON st.ingredient_id = i.id
             WHERE st.count_date = ?
@@ -672,9 +707,40 @@ elif page == "Stock Take":
             "Category": r["category"],
             "Ingredient": r["name"],
             "Quantity counted": f"{r['quantity_counted']:g}{r['base_unit']}",
+            "Expected (before this count)": f"{r['expected_qty_before']:g}{r['base_unit']}" if r["expected_qty_before"] is not None else "Not yet tracked",
+            "Variance": f"{r['variance']:+g}{r['base_unit']}" if r["variance"] is not None else "-",
+            "Flagged?": "🔴 Yes" if r["is_flagged"] else "",
             "Counted by": r["counted_by"],
         } for r in history_rows]
         st.dataframe(pd.DataFrame(history_data), use_container_width=True, hide_index=True)
+
+    st.divider()
+    st.subheader("Variance report")
+    st.caption("Every stock take where the count was off by more than the tolerance (±1kg / ±1L / ±1 unit), most recent first.")
+
+    conn = db.get_connection()
+    flagged_rows = conn.execute("""
+        SELECT i.name, i.base_unit, st.count_date, st.quantity_counted, st.expected_qty_before, st.variance, st.counted_by
+        FROM stock_takes st
+        JOIN ingredients i ON st.ingredient_id = i.id
+        WHERE st.is_flagged = 1
+        ORDER BY st.id DESC
+        LIMIT 50
+    """).fetchall()
+    conn.close()
+
+    if not flagged_rows:
+        st.success("No flagged variances on record.")
+    else:
+        variance_data = [{
+            "Date": r["count_date"],
+            "Ingredient": r["name"],
+            "Expected": f"{r['expected_qty_before']:g}{r['base_unit']}",
+            "Counted": f"{r['quantity_counted']:g}{r['base_unit']}",
+            "Variance": f"{r['variance']:+g}{r['base_unit']}",
+            "Counted by": r["counted_by"],
+        } for r in flagged_rows]
+        st.dataframe(pd.DataFrame(variance_data), use_container_width=True, hide_index=True)
 
 
 # =========================================================
@@ -732,6 +798,15 @@ if page == "Master Stock List":
                         cols[1].write(f"**Supplier:** {r['primary_supplier_name'] or '-'}")
                         cols[2].write(f"**You pay:** ${r['purchase_price']:.2f} for {r['purchase_size_label']}")
                         cols[3].write(f"**Recipes use it in:** {r['recipe_unit_qty']:g}{r['base_unit']} portions, costing ${cost:.3f} each")
+
+                        if r["current_stock_qty"] is not None:
+                            display_unit, factor = db.get_order_unit(r["base_unit"])
+                            stock_display = r["current_stock_qty"] / factor
+                            is_low = r["min_stock_qty"] is not None and r["current_stock_qty"] < r["min_stock_qty"]
+                            if is_low:
+                                st.error(f"🔴 Low stock: {stock_display:g} {display_unit} on hand (alert set below {r['min_stock_qty'] / factor:g} {display_unit})")
+                            else:
+                                st.caption(f"📦 Current stock: {stock_display:g} {display_unit} on hand")
             st.caption("(Updated dates shown on the ingredient's own page.)")
 
     # ---------------- ADD VIEW ----------------
@@ -771,6 +846,12 @@ if page == "Master Stock List":
             cost_per_portion = (purchase_price / (pack_qty_input * factor)) * recipe_unit_qty
             st.caption(f"= ${cost_per_portion:.4f} per {recipe_unit_qty:g}{base_unit} recipe portion")
 
+        st.write("**Low stock alert (optional — leave at 0 to skip for now)**")
+        min_stock_input = st.number_input(
+            f"Alert me when stock drops below this many {pack_unit_choice}",
+            min_value=0.0, step=1.0, key="add_ing_min_stock"
+        )
+
         col4, col5 = st.columns(2)
         with col4:
             primary_supplier_name = st.selectbox("Primary supplier", list(supplier_options.keys()), key="add_ing_primary_sup")
@@ -785,19 +866,20 @@ if page == "Master Stock List":
             else:
                 purchase_qty = pack_qty_input * factor
                 purchase_size_label = f"{pack_qty_input:g}{pack_unit_choice}" + (f" {container_word}" if container_word else "")
+                min_stock_qty = (min_stock_input * factor) if min_stock_input > 0 else None
                 conn = db.get_connection()
                 conn.execute("""
                     INSERT INTO ingredients
                         (name, category, primary_supplier_id, backup_supplier_id,
                          purchase_size_label, purchase_qty, base_unit, purchase_price,
-                         recipe_unit_qty, last_updated)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         recipe_unit_qty, min_stock_qty, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     name, category,
                     supplier_options[primary_supplier_name],
                     supplier_options[backup_supplier_name],
                     purchase_size_label, purchase_qty, base_unit, purchase_price,
-                    recipe_unit_qty, date.today().isoformat()
+                    recipe_unit_qty, min_stock_qty, date.today().isoformat()
                 ))
                 conn.commit()
                 conn.close()
@@ -888,6 +970,25 @@ if page == "Master Stock List":
                 cost_per_portion = (e_purchase_price / (e_pack_qty_input * e_factor)) * e_recipe_unit_qty
                 st.caption(f"= ${cost_per_portion:.4f} per {e_recipe_unit_qty:g}{e_base_unit} recipe portion")
 
+            st.write("**Low stock alert (leave at 0 to turn off)**")
+            existing_min = current["min_stock_qty"]
+            e_min_stock_input = st.number_input(
+                f"Alert me when stock drops below this many {e_pack_unit_choice}",
+                min_value=0.0, step=1.0,
+                value=float(existing_min / e_factor) if existing_min else 0.0,
+                key=f"edit_ing_min_stock_{selected_id}"
+            )
+
+            st.write("**Current stock on hand**")
+            st.caption("This is the running total the app tracks automatically (from sales and stock takes). Only change this directly if you know it's wrong.")
+            existing_stock = current["current_stock_qty"]
+            e_current_stock_input = st.number_input(
+                f"Current stock, in {e_pack_unit_choice}",
+                min_value=0.0, step=1.0,
+                value=float(existing_stock / e_factor) if existing_stock is not None else 0.0,
+                key=f"edit_ing_current_stock_{selected_id}"
+            )
+
             col4, col5 = st.columns(2)
             with col4:
                 e_primary = st.selectbox(
@@ -910,18 +1011,20 @@ if page == "Master Stock List":
                 else:
                     e_purchase_qty = e_pack_qty_input * e_factor
                     e_size_label = f"{e_pack_qty_input:g}{e_pack_unit_choice}" + (f" {e_container_word}" if e_container_word else "")
+                    e_min_stock_qty = (e_min_stock_input * e_factor) if e_min_stock_input > 0 else None
+                    e_current_stock_qty = e_current_stock_input * e_factor
                     conn = db.get_connection()
                     conn.execute("""
                         UPDATE ingredients
                         SET name=?, category=?, primary_supplier_id=?, backup_supplier_id=?,
                             purchase_size_label=?, purchase_qty=?, base_unit=?, purchase_price=?,
-                            recipe_unit_qty=?, last_updated=?
+                            recipe_unit_qty=?, min_stock_qty=?, current_stock_qty=?, last_updated=?
                         WHERE id=?
                     """, (
                         e_name, e_category,
                         supplier_options[e_primary], supplier_options[e_backup],
                         e_size_label, e_purchase_qty, e_base_unit, e_purchase_price,
-                        e_recipe_unit_qty, date.today().isoformat(), selected_id
+                        e_recipe_unit_qty, e_min_stock_qty, e_current_stock_qty, date.today().isoformat(), selected_id
                     ))
                     conn.commit()
                     conn.close()

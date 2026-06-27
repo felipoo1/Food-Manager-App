@@ -157,6 +157,8 @@ def init_db():
             purchase_price REAL,
             recipe_unit_qty REAL,
             last_updated TEXT,
+            current_stock_qty REAL,  -- running balance, in base_unit. NULL = never initialized
+            min_stock_qty REAL,      -- low-stock alert threshold, in base_unit. NULL = no alert set
             FOREIGN KEY (primary_supplier_id) REFERENCES suppliers(id),
             FOREIGN KEY (backup_supplier_id) REFERENCES suppliers(id)
         )
@@ -329,9 +331,18 @@ def init_db():
             count_date TEXT NOT NULL,
             quantity_counted REAL NOT NULL,
             counted_by TEXT,
+            expected_qty_before REAL,  -- the running balance the system expected, before this count
+            variance REAL,             -- quantity_counted - expected_qty_before
+            is_flagged INTEGER DEFAULT 0, -- 1 if |variance| exceeds tolerance (1kg/1L/1 unit)
             FOREIGN KEY (ingredient_id) REFERENCES ingredients(id) ON DELETE CASCADE
         )
     """)
+
+    _ensure_column("stock_takes", "expected_qty_before", "REAL")
+    _ensure_column("stock_takes", "variance", "REAL")
+    _ensure_column("stock_takes", "is_flagged", "INTEGER DEFAULT 0")
+    _ensure_column("ingredients", "current_stock_qty", "REAL")
+    _ensure_column("ingredients", "min_stock_qty", "REAL")
 
     conn.commit()
     conn.close()
@@ -386,6 +397,17 @@ def get_latest_stock_take_qty(ingredient_id, conn=None):
     if owns_conn:
         conn.close()
     return row["quantity_counted"] if row else None
+
+
+def get_variance_tolerance(base_unit):
+    """
+    Returns the acceptable variance (in base_unit) between what the system
+    expected and what staff actually counted during a Stock Take, before
+    it gets flagged for review. Matches the agreed tolerance: ±1kg for
+    weight-based ingredients, ±1L for liquids, ±1 unit for countable items.
+    """
+    tolerance_map = {"g": 1000, "ml": 1000, "each": 1}
+    return tolerance_map.get(base_unit, 1)
 
 
 def get_order_unit(base_unit):
