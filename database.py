@@ -610,7 +610,67 @@ def parse_pos_sales_file(file_bytes):
     return [{"name": k, "quantity_sold": v} for k, v in totals.items()]
 
 
-def apply_sales_deductions(confirmed_items, email_message_id, processed_by):
+def get_or_create_unmapped_category(conn=None):
+    """
+    Returns the id of a special 'Unmapped POS Items' Dish category, creating
+    it if it doesn't exist yet. Every placeholder recipe auto-created from
+    an unmatched sales item gets filed here, so they're all in one obvious
+    place for the Owner to flesh out (or rename/re-map) later.
+    """
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+    existing = conn.execute(
+        "SELECT id FROM recipe_categories WHERE name = ? AND type = 'Dish'", ("Unmapped POS Items",)
+    ).fetchone()
+    if existing:
+        category_id = existing["id"]
+    else:
+        conn.execute(
+            "INSERT INTO recipe_categories (name, type, created_at) VALUES (?, 'Dish', ?)",
+            ("Unmapped POS Items", date.today().isoformat())
+        )
+        category_id = conn.execute(
+            "SELECT id FROM recipe_categories WHERE name = ? AND type = 'Dish'", ("Unmapped POS Items",)
+        ).fetchone()["id"]
+        conn.commit()
+    if owns_conn:
+        conn.close()
+    return category_id
+
+
+def create_placeholder_recipe(pos_name, conn=None):
+    """
+    Creates a bare placeholder Recipe for a POS item that didn't match
+    anything -- so it's visible and trackable in the Recipes page instead of
+    silently disappearing. It starts with no ingredients/cost, but its name
+    means the NEXT time this same item is sold, it'll match itself directly.
+    Strips common POS prefixes (modifier "+", promo "[TAG]") for a cleaner name.
+    Returns the new recipe's id.
+    """
+    import re
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+
+    clean_name = re.sub(r"^\[.*?\]\s*", "", pos_name)  # strip a leading "[STUDENTMEAL] " style tag
+    clean_name = re.sub(r"^\+\s*", "", clean_name)      # strip a leading "+ " modifier marker
+    clean_name = clean_name.strip() or pos_name
+
+    category_id = get_or_create_unmapped_category(conn)
+    conn.execute(
+        "INSERT INTO recipes (name, type, category_id) VALUES (?, 'Dish', ?)",
+        (clean_name, category_id)
+    )
+    new_id = conn.execute("SELECT id FROM recipes WHERE name = ? AND category_id = ? ORDER BY id DESC LIMIT 1", (clean_name, category_id)).fetchone()["id"]
+
+    if owns_conn:
+        conn.commit()
+        conn.close()
+    return new_id
+
+
+def apply_sales_deductions(confirmed_items, unmatched_pos_names, email_message_id, processed_by):
     """
     Takes the Owner-confirmed list of matched sales items and actually
     deducts stock. confirmed_items is a list of dicts each with at least
@@ -624,7 +684,14 @@ def apply_sales_deductions(confirmed_items, email_message_id, processed_by):
 
     Only deducts from ingredients that have already been stock-counted at
     least once (current_stock_qty is not NULL) -- there's nothing sensible
-    to deduct from an uninitialized balance. Returns a summary dict.
+    to deduct from an uninitialized balance.
+
+    unmatched_pos_names: items that didn't match anything at all. Rather
+    than being silently skipped, each gets a placeholder Recipe created
+    (filed under "Unmapped POS Items") so it's visible and trackable, and
+    so the SAME item will match itself automatically next time it's sold.
+
+    Returns a summary dict.
     """
     conn = get_connection()
     usage = {}
@@ -650,12 +717,25 @@ def apply_sales_deductions(confirmed_items, email_message_id, processed_by):
         if ing["min_stock_qty"] is not None and new_qty < ing["min_stock_qty"]:
             low_stock_alerts.append((ing["name"], new_qty, ing["min_stock_qty"], ing["base_unit"]))
 
+    created_placeholders = []
+    for pos_name in unmatched_pos_names:
+        create_placeholder_recipe(pos_name, conn)
+        created_placeholders.append(pos_name)
+
     matched_count = len(confirmed_items)
     conn.execute(
         "INSERT INTO sales_sync_log (email_message_id, processed_at, processed_by, items_matched, items_unmatched, unmatched_names) VALUES (?, ?, ?, ?, ?, ?)",
-        (email_message_id, date.today().isoformat(), processed_by, matched_count, 0, None)
+        (email_message_id, date.today().isoformat(), processed_by, matched_count, len(created_placeholders),
+         ", ".join(created_placeholders) if created_placeholders else None)
     )
 
+    if created_placeholders:
+        add_notification(
+            "info",
+            f"Sales sync created {len(created_placeholders)} new placeholder recipe(s) for items that didn't match anything: "
+            f"{', '.join(created_placeholders)}. Find them under Recipes → Dish → 'Unmapped POS Items' and add ingredients so future sales deduct stock correctly.",
+            created_by=processed_by, conn=conn
+        )
     if low_stock_alerts:
         for name, new_qty, min_qty, base_unit in low_stock_alerts:
             display_unit, factor = get_order_unit(base_unit)
@@ -678,6 +758,7 @@ def apply_sales_deductions(confirmed_items, email_message_id, processed_by):
         "ingredients_deducted": len(usage) - len(skipped_uninitialized),
         "skipped_uninitialized": skipped_uninitialized,
         "low_stock_alerts": low_stock_alerts,
+        "created_placeholders": created_placeholders,
     }
 
 

@@ -2325,17 +2325,21 @@ elif page == "Sales Sync":
         review = st.session_state.sales_sync_review
         st.divider()
         st.subheader(f"Review: {review['filename']}")
-        st.caption("Confident matches are pre-checked. Review anything uncertain before applying — nothing is deducted until you click Apply below.")
+        st.caption("Confident matches are pre-checked. Items with no match get a placeholder recipe created so they're never just lost — uncheck any you'd rather skip.")
 
         confirmed_items = []
+        unmatched_to_create = []
         for i, m in enumerate(review["matches"]):
             cols = st.columns([3, 2, 3, 2])
             cols[0].write(f"**{m['pos_name']}**")
             cols[1].write(f"Sold: {m['quantity_sold']:g}")
 
             if m["match_type"] is None:
-                cols[2].write("❓ No match found")
-                cols[3].write("")
+                with cols[2]:
+                    create_it = st.checkbox("Create as new recipe", value=True, key=f"sync_create_{i}")
+                cols[3].caption("❓ No match found")
+                if create_it:
+                    unmatched_to_create.append(m["pos_name"])
                 continue
 
             with cols[2]:
@@ -2351,18 +2355,19 @@ elif page == "Sales Sync":
                     "match_type": m["match_type"], "match_id": m["match_id"], "quantity_sold": m["quantity_sold"]
                 })
 
-        unmatched_count = sum(1 for m in review["matches"] if m["match_type"] is None)
-        if unmatched_count:
-            st.warning(f"{unmatched_count} item(s) had no match at all and will be skipped — these won't affect stock.")
+        if unmatched_to_create:
+            st.info(f"{len(unmatched_to_create)} item(s) will get a new placeholder recipe created (filed under Recipes → Dish → 'Unmapped POS Items') so they're trackable instead of disappearing.")
 
         apply_col, cancel_col = st.columns(2)
         with apply_col:
             if st.button("Apply confirmed changes", type="primary", use_container_width=True):
-                summary = db.apply_sales_deductions(confirmed_items, review["email_message_id"], current_user["name"])
+                summary = db.apply_sales_deductions(confirmed_items, unmatched_to_create, review["email_message_id"], current_user["name"])
                 st.success(
                     f"Stock updated for {summary['ingredients_deducted']} ingredient(s)."
                     + (f" {len(summary['skipped_uninitialized'])} skipped (never stock-counted)." if summary["skipped_uninitialized"] else "")
                 )
+                if summary["created_placeholders"]:
+                    st.info(f"Created {len(summary['created_placeholders'])} new placeholder recipe(s): {', '.join(summary['created_placeholders'])}")
                 if summary["low_stock_alerts"]:
                     st.warning(f"{len(summary['low_stock_alerts'])} ingredient(s) are now below their low-stock threshold — check Notifications.")
                 del st.session_state.sales_sync_review
