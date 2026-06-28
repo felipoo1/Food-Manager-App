@@ -47,7 +47,7 @@ st.markdown(f"""
 # process never fully restarts -- this is what prevents the exact bug where
 # new tables silently don't get created because a stale cached "already set
 # up" result from before the change was reused.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 
 @st.cache_resource
@@ -226,6 +226,7 @@ if is_owner:
     nav_options.append("Task History")
     nav_options.append("Invoices")
     nav_options.append("Staff")
+    nav_options.append("Sales Sync")
     nav_options.append("Data Export")
 
 if "current_page" not in st.session_state:
@@ -243,6 +244,7 @@ NAV_ICONS = {
     "Task History": ":material/history:",
     "Invoices": ":material/receipt_long:",
     "Staff": ":material/group:",
+    "Sales Sync": ":material/sync:",
     "Data Export": ":material/download:",
 }
 
@@ -2275,6 +2277,113 @@ elif page == "Staff":
                     st.success("Removed.")
                     st.session_state.staff_mode = "list"
                     st.rerun()
+
+
+# =========================================================
+# PAGE: SALES SYNC  (owner only)
+# =========================================================
+elif page == "Sales Sync":
+    if not is_owner:
+        st.error("This page is restricted to the Owner account.")
+        st.stop()
+
+    st.title("Sales sync")
+    st.caption(
+        "Pulls your POS's daily sales report by email and deducts ingredient stock accordingly. "
+        "This only runs when you click the button below — it can't check automatically in the background."
+    )
+
+    if st.button("Check for new sales email", type="primary", icon=":material/sync:"):
+        with st.spinner("Connecting to the mailbox..."):
+            result, error = db.fetch_latest_pos_sales_email()
+        if error:
+            st.error(error)
+        else:
+            conn = db.get_connection()
+            already_done = conn.execute(
+                "SELECT * FROM sales_sync_log WHERE email_message_id = ?", (result["message_id"],)
+            ).fetchone()
+            conn.close()
+
+            if already_done:
+                st.info(f"This email was already processed on {already_done['processed_at']} — nothing new to do.")
+            else:
+                with st.spinner("Reading the report..."):
+                    parsed_items = db.parse_pos_sales_file(result["file_bytes"])
+                if not parsed_items:
+                    st.warning("Found an email with an .xls attachment, but couldn't read any sales items from it. The report format may have changed.")
+                else:
+                    matched = db.match_sales_items_to_recipes_and_ingredients(parsed_items)
+                    st.session_state.sales_sync_review = {
+                        "email_message_id": result["message_id"],
+                        "filename": result["filename"],
+                        "matches": matched,
+                    }
+                    st.rerun()
+
+    if "sales_sync_review" in st.session_state:
+        review = st.session_state.sales_sync_review
+        st.divider()
+        st.subheader(f"Review: {review['filename']}")
+        st.caption("Confident matches are pre-checked. Review anything uncertain before applying — nothing is deducted until you click Apply below.")
+
+        confirmed_items = []
+        for i, m in enumerate(review["matches"]):
+            cols = st.columns([3, 2, 3, 2])
+            cols[0].write(f"**{m['pos_name']}**")
+            cols[1].write(f"Sold: {m['quantity_sold']:g}")
+
+            if m["match_type"] is None:
+                cols[2].write("❓ No match found")
+                cols[3].write("")
+                continue
+
+            with cols[2]:
+                include = st.checkbox(
+                    f"{m['match_name']} ({m['match_type']})",
+                    value=m["score"] >= 0.6,
+                    key=f"sync_include_{i}"
+                )
+            cols[3].caption(f"Confidence: {m['score']:.0%}")
+
+            if include:
+                confirmed_items.append({
+                    "match_type": m["match_type"], "match_id": m["match_id"], "quantity_sold": m["quantity_sold"]
+                })
+
+        unmatched_count = sum(1 for m in review["matches"] if m["match_type"] is None)
+        if unmatched_count:
+            st.warning(f"{unmatched_count} item(s) had no match at all and will be skipped — these won't affect stock.")
+
+        apply_col, cancel_col = st.columns(2)
+        with apply_col:
+            if st.button("Apply confirmed changes", type="primary", use_container_width=True):
+                summary = db.apply_sales_deductions(confirmed_items, review["email_message_id"], current_user["name"])
+                st.success(
+                    f"Stock updated for {summary['ingredients_deducted']} ingredient(s)."
+                    + (f" {len(summary['skipped_uninitialized'])} skipped (never stock-counted)." if summary["skipped_uninitialized"] else "")
+                )
+                if summary["low_stock_alerts"]:
+                    st.warning(f"{len(summary['low_stock_alerts'])} ingredient(s) are now below their low-stock threshold — check Notifications.")
+                del st.session_state.sales_sync_review
+                st.rerun()
+        with cancel_col:
+            if st.button("Discard this review", use_container_width=True):
+                del st.session_state.sales_sync_review
+                st.rerun()
+
+    st.divider()
+    st.subheader("Sync history")
+    conn = db.get_connection()
+    sync_history = conn.execute("SELECT * FROM sales_sync_log ORDER BY id DESC LIMIT 20").fetchall()
+    conn.close()
+    if not sync_history:
+        st.caption("No sales reports processed yet.")
+    else:
+        history_data = [{
+            "Processed": r["processed_at"], "By": r["processed_by"], "Items matched": r["items_matched"]
+        } for r in sync_history]
+        st.dataframe(pd.DataFrame(history_data), use_container_width=True, hide_index=True)
 
 
 # =========================================================

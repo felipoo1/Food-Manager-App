@@ -261,6 +261,18 @@ def init_db():
     _ensure_column("notifications", "is_read", "INTEGER DEFAULT 0")
 
     cur.execute("""
+        CREATE TABLE IF NOT EXISTS sales_sync_log (
+            id SERIAL PRIMARY KEY,
+            email_message_id TEXT UNIQUE,  -- prevents the same email ever being processed twice
+            processed_at TEXT,
+            processed_by TEXT,
+            items_matched INTEGER,
+            items_unmatched INTEGER,
+            unmatched_names TEXT  -- comma-separated, for the Owner to review
+        )
+    """)
+
+    cur.execute("""
         CREATE TABLE IF NOT EXISTS recipe_lines (
             id SERIAL PRIMARY KEY,
             parent_recipe_id INTEGER NOT NULL,
@@ -560,6 +572,167 @@ def mark_all_notifications_read():
     conn.close()
 
 
+def parse_pos_sales_file(file_bytes):
+    """
+    Parses a POS 'Itemised Sales Report' .xls file and returns a combined,
+    aggregated list of [{"name": ..., "quantity_sold": ...}, ...] from BOTH
+    the 'Product' and 'Modifier' sheets, since both represent things that
+    consume ingredient stock (a whole dish, or an add-on like extra spinach).
+
+    The real header row in this report format is the 3rd row of each sheet
+    (the first two rows are a title and a date-range summary), so those are
+    skipped. The same item can appear on multiple rows (e.g. sold via
+    "Self Order", "Pick Up", and "Dine In" separately) -- these are summed
+    together since what matters for stock deduction is the total sold.
+    """
+    import io
+    import pandas as pd
+    from collections import defaultdict
+
+    totals = defaultdict(float)
+
+    for sheet_name, name_column in [("Product", "Product Name"), ("Modifier", "Modifier Name")]:
+        try:
+            df = pd.read_excel(io.BytesIO(file_bytes), sheet_name=sheet_name, skiprows=2, engine="xlrd")
+        except Exception:
+            continue  # sheet might not exist in some report variants -- skip gracefully
+
+        if name_column not in df.columns or "Total Quantity Sold" not in df.columns:
+            continue
+
+        for _, row in df.iterrows():
+            item_name = row.get(name_column)
+            qty = row.get("Total Quantity Sold")
+            if pd.isna(item_name) or pd.isna(qty):
+                continue
+            totals[str(item_name).strip()] += float(qty)
+
+    return [{"name": k, "quantity_sold": v} for k, v in totals.items()]
+
+
+def apply_sales_deductions(confirmed_items, email_message_id, processed_by):
+    """
+    Takes the Owner-confirmed list of matched sales items and actually
+    deducts stock. confirmed_items is a list of dicts each with at least
+    "match_type" ("recipe" or "ingredient"), "match_id", and "quantity_sold".
+
+    For a matched Recipe: walks its full ingredient breakdown (including
+    nested Preps) via accumulate_recipe_ingredient_usage.
+    For a matched Ingredient directly (e.g. a "+Bacon" modifier add-on):
+    treats quantity_sold as that many of the ingredient's own recipe-portion
+    size, the same convention used everywhere else in the app.
+
+    Only deducts from ingredients that have already been stock-counted at
+    least once (current_stock_qty is not NULL) -- there's nothing sensible
+    to deduct from an uninitialized balance. Returns a summary dict.
+    """
+    conn = get_connection()
+    usage = {}
+
+    for item in confirmed_items:
+        if item["match_type"] == "recipe":
+            accumulate_recipe_ingredient_usage(item["match_id"], item["quantity_sold"], usage, conn)
+        elif item["match_type"] == "ingredient":
+            ing = conn.execute("SELECT * FROM ingredients WHERE id = ?", (item["match_id"],)).fetchone()
+            if ing and ing["recipe_unit_qty"]:
+                usage[item["match_id"]] = usage.get(item["match_id"], 0.0) + item["quantity_sold"] * ing["recipe_unit_qty"]
+
+    skipped_uninitialized = []
+    low_stock_alerts = []
+
+    for ingredient_id, qty_used in usage.items():
+        ing = conn.execute("SELECT * FROM ingredients WHERE id = ?", (ingredient_id,)).fetchone()
+        if ing["current_stock_qty"] is None:
+            skipped_uninitialized.append(ing["name"])
+            continue
+        new_qty = ing["current_stock_qty"] - qty_used
+        conn.execute("UPDATE ingredients SET current_stock_qty = ? WHERE id = ?", (new_qty, ingredient_id))
+        if ing["min_stock_qty"] is not None and new_qty < ing["min_stock_qty"]:
+            low_stock_alerts.append((ing["name"], new_qty, ing["min_stock_qty"], ing["base_unit"]))
+
+    matched_count = len(confirmed_items)
+    conn.execute(
+        "INSERT INTO sales_sync_log (email_message_id, processed_at, processed_by, items_matched, items_unmatched, unmatched_names) VALUES (?, ?, ?, ?, ?, ?)",
+        (email_message_id, date.today().isoformat(), processed_by, matched_count, 0, None)
+    )
+
+    if low_stock_alerts:
+        for name, new_qty, min_qty, base_unit in low_stock_alerts:
+            display_unit, factor = get_order_unit(base_unit)
+            add_notification(
+                "error",
+                f"Low stock: {name} is now at {new_qty / factor:g} {display_unit} (alert set below {min_qty / factor:g} {display_unit}).",
+                created_by=processed_by, conn=conn
+            )
+    if skipped_uninitialized:
+        add_notification(
+            "info",
+            f"Sales sync skipped deducting {len(skipped_uninitialized)} ingredient(s) that have never been stock-counted yet: {', '.join(skipped_uninitialized)}. Do an initial Stock Take for these.",
+            created_by=processed_by, conn=conn
+        )
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "ingredients_deducted": len(usage) - len(skipped_uninitialized),
+        "skipped_uninitialized": skipped_uninitialized,
+        "low_stock_alerts": low_stock_alerts,
+    }
+
+
+def fetch_latest_pos_sales_email():
+    """
+    Connects to the POS sales report email account via IMAP and returns the
+    most recent email that has an .xls attachment.
+    Requires POS_GMAIL_ADDRESS and POS_GMAIL_APP_PASSWORD in Streamlit secrets
+    (the same App Password mechanism used for order emails, just for this
+    second account).
+    Returns (result_dict, error_message). result_dict is None if nothing
+    found or something went wrong; error_message explains why.
+    """
+    import imaplib
+    import email as email_lib
+
+    if "POS_GMAIL_ADDRESS" not in st.secrets or "POS_GMAIL_APP_PASSWORD" not in st.secrets:
+        return None, "Email retrieval isn't set up yet (missing POS_GMAIL_ADDRESS / POS_GMAIL_APP_PASSWORD secrets)."
+
+    address = st.secrets["POS_GMAIL_ADDRESS"]
+    app_password = st.secrets["POS_GMAIL_APP_PASSWORD"]
+
+    try:
+        imap = imaplib.IMAP4_SSL("imap.gmail.com", 993)
+        imap.login(address, app_password)
+        imap.select("INBOX")
+
+        status, message_numbers = imap.search(None, "ALL")
+        if status != "OK" or not message_numbers[0]:
+            imap.logout()
+            return None, "No emails found in this inbox."
+
+        ids = message_numbers[0].split()
+        # Check the most recent emails first (newest last in IMAP's list), looking for one with an .xls attachment
+        for msg_id in reversed(ids[-20:]):
+            status, msg_data = imap.fetch(msg_id, "(RFC822)")
+            if status != "OK":
+                continue
+            raw_email = msg_data[0][1]
+            msg = email_lib.message_from_bytes(raw_email)
+            message_id_header = msg.get("Message-ID") or f"no-id-{msg_id.decode()}"
+
+            for part in msg.walk():
+                filename = part.get_filename()
+                if filename and filename.lower().endswith(".xls"):
+                    file_bytes = part.get_payload(decode=True)
+                    imap.logout()
+                    return {"message_id": message_id_header, "filename": filename, "file_bytes": file_bytes}, None
+
+        imap.logout()
+        return None, "No recent email with an .xls attachment was found in the last 20 messages."
+    except Exception as e:
+        return None, str(e)
+
+
 def find_best_match(target_text, candidates):
     """
     Fuzzy-matches a piece of text (e.g. an invoice line item description)
@@ -576,6 +749,50 @@ def find_best_match(target_text, candidates):
     best = matches[0]
     score = difflib.SequenceMatcher(None, target_text.lower(), best.lower()).ratio()
     return best, score
+
+
+def match_sales_items_to_recipes_and_ingredients(parsed_items, conn=None):
+    """
+    For each {name, quantity_sold} parsed from a POS sales report, finds the
+    best match among BOTH existing Recipes and Ingredients.
+
+    Testing against a real POS export showed that matching against Recipes
+    alone gets modifier add-ons wrong -- e.g. "+ Bacon" matched to the
+    "Bacon Aglio" dish instead of the plain Bacon ingredient, and "Spinach"
+    (an add-on) had no match at all since there's no "Spinach" recipe.
+    Including ingredient names in the matching pool fixes both cases.
+
+    Returns a list of dicts ready for a review screen:
+        {"pos_name", "quantity_sold", "match_type" ("recipe"/"ingredient"/None),
+         "match_id", "match_name", "score"}
+    """
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+
+    recipes = conn.execute("SELECT id, name FROM recipes").fetchall()
+    ingredients = conn.execute("SELECT id, name FROM ingredients").fetchall()
+    if owns_conn:
+        conn.close()
+
+    name_to_recipe = {r["name"]: r["id"] for r in recipes}
+    name_to_ingredient = {i["name"]: i["id"] for i in ingredients}
+    combined_names = list(name_to_recipe.keys()) + list(name_to_ingredient.keys())
+
+    results = []
+    for item in parsed_items:
+        match_name, score = find_best_match(item["name"], combined_names)
+        match_type, match_id = None, None
+        if match_name:
+            if match_name in name_to_recipe:
+                match_type, match_id = "recipe", name_to_recipe[match_name]
+            elif match_name in name_to_ingredient:
+                match_type, match_id = "ingredient", name_to_ingredient[match_name]
+        results.append({
+            "pos_name": item["name"], "quantity_sold": item["quantity_sold"],
+            "match_type": match_type, "match_id": match_id, "match_name": match_name, "score": score
+        })
+    return results
 
 
 def migrate_manager_role_to_owner():
@@ -680,6 +897,43 @@ def compute_recipe_cost(recipe_id, conn=None, _visited=None):
     if owns_conn:
         conn.close()
     return total
+
+
+def accumulate_recipe_ingredient_usage(recipe_id, multiplier, usage_dict, conn=None, _visited=None):
+    """
+    Recursively walks a recipe's lines (handling nested Prep sub-recipes,
+    using the exact same recursion pattern as compute_recipe_cost) and adds
+    up how much of each underlying ingredient gets used, scaled by
+    `multiplier` (e.g. how many of this recipe were sold today).
+    Accumulates directly into usage_dict: {ingredient_id: qty_in_base_unit}.
+    Used by the POS sales sync to figure out how much stock to deduct.
+    """
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+    if _visited is None:
+        _visited = set()
+
+    if recipe_id in _visited:
+        if owns_conn:
+            conn.close()
+        return usage_dict
+    _visited.add(recipe_id)
+
+    lines = conn.execute("SELECT * FROM recipe_lines WHERE parent_recipe_id = ?", (recipe_id,)).fetchall()
+
+    for line in lines:
+        if line["ingredient_id"] is not None:
+            usage_dict[line["ingredient_id"]] = usage_dict.get(line["ingredient_id"], 0.0) + line["quantity"] * multiplier
+        elif line["sub_recipe_id"] is not None:
+            sub_recipe = conn.execute("SELECT * FROM recipes WHERE id = ?", (line["sub_recipe_id"],)).fetchone()
+            if sub_recipe and sub_recipe["yield_qty"]:
+                sub_multiplier = multiplier * (line["quantity"] / sub_recipe["yield_qty"])
+                accumulate_recipe_ingredient_usage(line["sub_recipe_id"], sub_multiplier, usage_dict, conn, _visited)
+
+    if owns_conn:
+        conn.close()
+    return usage_dict
 
 
 def compute_line_cost(line, conn):
