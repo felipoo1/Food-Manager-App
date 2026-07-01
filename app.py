@@ -2605,6 +2605,29 @@ elif page == "Invoices":
                                 item["_source_supplier"] = inv.get("supplier_name", "")
                                 all_line_items.append(item)
 
+                        # Deduplicate: same description appearing across multiple invoice
+                        # pages is extremely common (e.g. SHITAKE MUSHROOM appears in
+                        # every delivery). Keep only the most recent entry per description
+                        # (last invoice date wins, since that's the current price).
+                        # Pack size is kept from the first occurrence as a tiebreaker.
+                        seen = {}
+                        for item in all_line_items:
+                            key = item.get("description", "").strip().upper()
+                            if not key:
+                                continue
+                            if key not in seen:
+                                seen[key] = item
+                            else:
+                                # Replace if this entry is from a more recent invoice
+                                existing_date = seen[key].get("_source_date", "")
+                                this_date = item.get("_source_date", "")
+                                if this_date > existing_date:
+                                    # Keep the pack_size from the first occurrence if not given
+                                    if not item.get("pack_size"):
+                                        item["pack_size"] = seen[key].get("pack_size", "")
+                                    seen[key] = item
+                        all_line_items = list(seen.values())
+
                         parsed = {
                             "supplier_name": supplier_name_raw,
                             "supplier_uen": supplier_uen_raw,
