@@ -2497,10 +2497,16 @@ elif page == "Invoices":
             "Settings → Secrets on Streamlit Community Cloud, then refresh this page."
         )
     else:
-        uploaded_file = st.file_uploader("Upload invoice photo", type=["png", "jpg", "jpeg"])
+        uploaded_file = st.file_uploader(
+            "Upload invoice (photo or PDF)", type=["png", "jpg", "jpeg", "pdf"]
+        )
 
         if uploaded_file is not None:
-            st.image(uploaded_file, width=300)
+            is_pdf = uploaded_file.type == "application/pdf" or uploaded_file.name.lower().endswith(".pdf")
+            if is_pdf:
+                st.caption(f"📄 PDF uploaded: {uploaded_file.name}")
+            else:
+                st.image(uploaded_file, width=300)
 
             if st.button("Scan invoice"):
                 import anthropic
@@ -2510,9 +2516,30 @@ elif page == "Invoices":
                 with st.spinner("Reading the invoice..."):
                     try:
                         client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
-                        image_bytes = uploaded_file.getvalue()
-                        b64_data = base64.b64encode(image_bytes).decode("utf-8")
-                        media_type = uploaded_file.type or "image/jpeg"
+                        file_bytes = uploaded_file.getvalue()
+                        b64_data = base64.b64encode(file_bytes).decode("utf-8")
+
+                        # PDFs go through Claude's "document" content block;
+                        # images use the "image" content block with their MIME type.
+                        if is_pdf:
+                            file_content_block = {
+                                "type": "document",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "application/pdf",
+                                    "data": b64_data
+                                }
+                            }
+                        else:
+                            media_type = uploaded_file.type or "image/jpeg"
+                            file_content_block = {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": b64_data
+                                }
+                            }
 
                         response = client.messages.create(
                             model="claude-haiku-4-5-20251001",
@@ -2525,7 +2552,7 @@ elif page == "Invoices":
                             messages=[{
                                 "role": "user",
                                 "content": [
-                                    {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64_data}},
+                                    file_content_block,
                                     {"type": "text", "text": (
                                         "Extract the supplier name, invoice date, and every line item from this "
                                         "invoice. For each line item give: description, pack size (if shown), "
