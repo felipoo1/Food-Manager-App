@@ -2746,32 +2746,63 @@ elif page == "Invoices":
 
         def parse_pack_size(pack_size_text):
             """
-            Tries to extract a (qty, display_unit) pair from pack size text like
-            '16 KG', '640 ML', '25KG', '8 PKT'. Falls back to (1.0, 'Each')
-            if nothing useful can be parsed.
+            Extracts (total_qty, display_unit) from pack size text, handling:
+            - Simple:     '16 KG', '640 ML', '25KG', '8 PKT'
+            - Multiplier: '1KG*10' → 10 Kg, '10*1KG' → 10 Kg, '1KG*10 CHN' → 10 Kg
+              (supplier codes like CHN after the multiplier are ignored)
+            Falls back to (1.0, 'Each') if nothing useful can be parsed.
             """
             import re
             if not pack_size_text:
                 return 1.0, "Each"
             text = pack_size_text.strip().upper()
-            match = re.search(r"([\d.]+)\s*(KG|G|L|ML|LITRE|LITER|PKT|PACK|EA|EACH|UNIT)", text)
-            if not match:
-                return 1.0, "Each"
-            qty = float(match.group(1))
-            raw_unit = match.group(2)
             unit_map = {
                 "KG": "Kg", "G": "g",
                 "L": "L", "LITRE": "L", "LITER": "L", "ML": "ml",
                 "PKT": "Each", "PACK": "Each", "EA": "Each", "EACH": "Each", "UNIT": "Each"
             }
-            display_unit = unit_map.get(raw_unit, "Each")
-            return qty, display_unit
+
+            # Pattern: NxUNIT*M or UNIT-quantity*count  e.g. '1KG*10', '10*1KG'
+            # Try "qty UNIT * multiplier" first (most common in wholesale invoices)
+            mult_match = re.search(
+                r"([\d.]+)\s*(KG|G|L|ML|LITRE|LITER|PKT|PACK|EA|EACH|UNIT)\s*\*\s*([\d.]+)", text
+            )
+            if mult_match:
+                unit_qty = float(mult_match.group(1))
+                raw_unit = mult_match.group(2)
+                count = float(mult_match.group(3))
+                return unit_qty * count, unit_map.get(raw_unit, "Each")
+
+            # Try "count * qty UNIT" e.g. '10*1KG'
+            mult_match2 = re.search(
+                r"([\d.]+)\s*\*\s*([\d.]+)\s*(KG|G|L|ML|LITRE|LITER|PKT|PACK|EA|EACH|UNIT)", text
+            )
+            if mult_match2:
+                count = float(mult_match2.group(1))
+                unit_qty = float(mult_match2.group(2))
+                raw_unit = mult_match2.group(3)
+                return count * unit_qty, unit_map.get(raw_unit, "Each")
+
+            # Simple: '16 KG', '640 ML', '8 PKT'
+            simple = re.search(r"([\d.]+)\s*(KG|G|L|ML|LITRE|LITER|PKT|PACK|EA|EACH|UNIT)", text)
+            if simple:
+                return float(simple.group(1)), unit_map.get(simple.group(2), "Each")
+
+            return 1.0, "Each"
 
         for idx, row in enumerate(scan["rows"]):
             st.markdown("---")
             cols = st.columns([3, 2, 2])
             cols[0].write(f"**{row['description']}**  \n{row['pack_size']}")
-            cols[1].write(f"Invoice price: ${row['new_price']:.2f}")
+            parsed_qty, parsed_unit = parse_pack_size(row["pack_size"])
+            INV_UNIT_MAP_LOCAL = {"g": ("g", 1), "Kg": ("g", 1000), "ml": ("ml", 1), "L": ("ml", 1000), "Each": ("each", 1)}
+            _, factor = INV_UNIT_MAP_LOCAL.get(parsed_unit, ("each", 1))
+            total_base_qty = parsed_qty * factor
+            per_unit_price = (row["new_price"] / parsed_qty) if parsed_qty > 0 else None
+            cols[1].write(
+                f"Invoice price: **${row['new_price']:.2f}**"
+                + (f"  \n${per_unit_price:.4f} per {parsed_unit}" if per_unit_price and parsed_qty > 1 else "")
+            )
 
             if row["status"] == "unmatched":
                 cols[2].write("🔴 No confident match")
@@ -2782,7 +2813,7 @@ elif page == "Invoices":
                     key=f"inv_match_choice_{idx}"
                 )
                 if chosen == "+ Create new ingredient":
-                    parsed_qty, parsed_unit = parse_pack_size(row["pack_size"])
+                    # parsed_qty and parsed_unit already computed above for the price display
                     unit_keys = list(INV_UNIT_MAP.keys())
                     default_unit_idx = unit_keys.index(parsed_unit) if parsed_unit in unit_keys else 0
                     st.write("**New ingredient details:**")
