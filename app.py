@@ -2572,7 +2572,7 @@ elif page == "Invoices":
                             }]
                         )
                         if is_pdf:
-                            api_kwargs["betas"] = ["pdfs-2024-09-25"]
+                            api_kwargs["extra_headers"] = {"anthropic-beta": "pdfs-2024-09-25"}
 
                         response = client.messages.create(**api_kwargs)
 
