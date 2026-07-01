@@ -2519,8 +2519,6 @@ elif page == "Invoices":
                         file_bytes = uploaded_file.getvalue()
                         b64_data = base64.b64encode(file_bytes).decode("utf-8")
 
-                        # PDFs go through Claude's "document" content block;
-                        # images use the "image" content block with their MIME type.
                         if is_pdf:
                             file_content_block = {
                                 "type": "document",
@@ -2541,32 +2539,72 @@ elif page == "Invoices":
                                 }
                             }
 
-                        response = client.messages.create(
+                        # PDFs may contain multiple invoices across pages.
+                        # We always ask for an array of invoices (even for images,
+                        # which will just return a one-element array) so the same
+                        # parsing logic handles both cases cleanly.
+                        # betas=["pdfs-2024-09-25"] is required for PDF document
+                        # support -- without it the API silently fails even on
+                        # recent models.
+                        api_kwargs = dict(
                             model="claude-haiku-4-5-20251001",
-                            max_tokens=1024,
+                            max_tokens=4096,
                             system=(
-                                "You extract structured data from supplier invoice photos for a cafe's "
-                                "stock system. Respond with ONLY valid JSON, no preamble, no markdown "
-                                "code fences, no extra commentary."
+                                "You extract structured data from supplier invoices for a cafe's "
+                                "stock system. A PDF may contain multiple invoices across pages — "
+                                "extract ALL of them. Respond with ONLY valid JSON, no preamble, "
+                                "no markdown code fences, no extra commentary."
                             ),
                             messages=[{
                                 "role": "user",
                                 "content": [
                                     file_content_block,
                                     {"type": "text", "text": (
-                                        "Extract the supplier name, invoice date, and every line item from this "
-                                        "invoice. For each line item give: description, pack size (if shown), "
-                                        "and price. Respond as JSON exactly in this shape: "
-                                        '{"supplier_name": "", "invoice_date": "", "line_items": '
-                                        '[{"description": "", "pack_size": "", "price": 0.0}]}'
+                                        "Extract every invoice in this document. For each invoice give the "
+                                        "supplier name, invoice date, and every line item (description, "
+                                        "pack size if shown, and total price for that line). "
+                                        "Respond as a JSON array — one element per invoice — exactly in "
+                                        "this shape: "
+                                        '[{"supplier_name": "", "invoice_date": "", "line_items": '
+                                        '[{"description": "", "pack_size": "", "price": 0.0}]}]'
                                     )}
                                 ]
                             }]
                         )
+                        if is_pdf:
+                            api_kwargs["betas"] = ["pdfs-2024-09-25"]
+
+                        response = client.messages.create(**api_kwargs)
 
                         raw_text = response.content[0].text.strip()
                         raw_text = raw_text.replace("```json", "").replace("```", "").strip()
-                        parsed = json.loads(raw_text)
+                        parsed_raw = json.loads(raw_text)
+
+                        # Normalise: always work with a list of invoices
+                        if isinstance(parsed_raw, dict):
+                            invoices = [parsed_raw]
+                        else:
+                            invoices = parsed_raw
+
+                        # Merge all invoices' line items for the review screen.
+                        # If multiple invoices from the same supplier are in one
+                        # PDF we combine them; different suppliers stay separate
+                        # but all get processed in one review pass.
+                        all_line_items = []
+                        supplier_name_raw = invoices[0].get("supplier_name", "") if invoices else ""
+                        invoice_date_raw = invoices[0].get("invoice_date", "") if invoices else ""
+                        for inv in invoices:
+                            for item in inv.get("line_items", []):
+                                item["_source_date"] = inv.get("invoice_date", "")
+                                item["_source_supplier"] = inv.get("supplier_name", "")
+                                all_line_items.append(item)
+
+                        parsed = {
+                            "supplier_name": supplier_name_raw,
+                            "invoice_date": invoice_date_raw,
+                            "line_items": all_line_items,
+                            "_invoice_count": len(invoices),
+                        }
 
                         conn = db.get_connection()
                         ingredient_rows = conn.execute("SELECT * FROM ingredients").fetchall()
@@ -2609,11 +2647,16 @@ elif page == "Invoices":
                             "supplier_matched": matched_supplier,
                             "invoice_date": parsed.get("invoice_date", ""),
                             "rows": review_rows,
+                            "_invoice_count": parsed.get("_invoice_count", 1),
                         }
                         st.rerun()
 
-                    except json.JSONDecodeError:
-                        st.error("Couldn't read structured data from that photo. Try a clearer, well-lit photo of the invoice.")
+                    except json.JSONDecodeError as e:
+                        st.error(
+                            "Couldn't read structured data from that invoice. "
+                            + ("For PDFs: check the file isn't password-protected or corrupted. " if is_pdf else "Try a clearer, well-lit photo. ")
+                            + f"Details: {e}"
+                        )
                     except Exception as e:
                         st.error(f"Something went wrong while scanning: {e}")
 
@@ -2628,7 +2671,11 @@ elif page == "Invoices":
         all_ingredient_names = [r["name"] for r in conn.execute("SELECT name FROM ingredients ORDER BY name").fetchall()]
         conn.close()
 
-        st.write(f"**Invoice date (as read):** {scan['invoice_date'] or 'not detected'}")
+        invoice_count = scan.get("_invoice_count", 1)
+        if invoice_count > 1:
+            st.info(f"📄 This PDF contained **{invoice_count} separate invoices** — all {len(scan['rows'])} line items below have been combined for review.")
+        else:
+            st.write(f"**Invoice date (as read):** {scan['invoice_date'] or 'not detected'}")
 
         # ---- Supplier handling ----
         if scan["supplier_matched"]:
