@@ -2561,11 +2561,13 @@ elif page == "Invoices":
                                     file_content_block,
                                     {"type": "text", "text": (
                                         "Extract every invoice in this document. For each invoice give the "
-                                        "supplier name, invoice date, and every line item (description, "
-                                        "pack size if shown, and total price for that line). "
+                                        "supplier name, supplier registration/UEN number, supplier address, "
+                                        "supplier phone number, supplier email, invoice date, and every line "
+                                        "item (description, pack size if shown, and total price for that line). "
                                         "Respond as a JSON array — one element per invoice — exactly in "
                                         "this shape: "
-                                        '[{"supplier_name": "", "invoice_date": "", "line_items": '
+                                        '[{"supplier_name": "", "supplier_uen": "", "supplier_address": "", '
+                                        '"supplier_phone": "", "supplier_email": "", "invoice_date": "", "line_items": '
                                         '[{"description": "", "pack_size": "", "price": 0.0}]}]'
                                     )}
                                 ]
@@ -2593,6 +2595,10 @@ elif page == "Invoices":
                         all_line_items = []
                         supplier_name_raw = invoices[0].get("supplier_name", "") if invoices else ""
                         invoice_date_raw = invoices[0].get("invoice_date", "") if invoices else ""
+                        supplier_uen_raw = invoices[0].get("supplier_uen", "") if invoices else ""
+                        supplier_address_raw = invoices[0].get("supplier_address", "") if invoices else ""
+                        supplier_phone_raw = invoices[0].get("supplier_phone", "") if invoices else ""
+                        supplier_email_raw = invoices[0].get("supplier_email", "") if invoices else ""
                         for inv in invoices:
                             for item in inv.get("line_items", []):
                                 item["_source_date"] = inv.get("invoice_date", "")
@@ -2601,6 +2607,10 @@ elif page == "Invoices":
 
                         parsed = {
                             "supplier_name": supplier_name_raw,
+                            "supplier_uen": supplier_uen_raw,
+                            "supplier_address": supplier_address_raw,
+                            "supplier_phone": supplier_phone_raw,
+                            "supplier_email": supplier_email_raw,
                             "invoice_date": invoice_date_raw,
                             "line_items": all_line_items,
                             "_invoice_count": len(invoices),
@@ -2644,6 +2654,10 @@ elif page == "Invoices":
 
                         st.session_state.invoice_scan = {
                             "supplier_input": parsed.get("supplier_name", ""),
+                            "supplier_uen": parsed.get("supplier_uen", ""),
+                            "supplier_address": parsed.get("supplier_address", ""),
+                            "supplier_phone": parsed.get("supplier_phone", ""),
+                            "supplier_email": parsed.get("supplier_email", ""),
                             "supplier_matched": matched_supplier,
                             "invoice_date": parsed.get("invoice_date", ""),
                             "rows": review_rows,
@@ -2691,11 +2705,11 @@ elif page == "Invoices":
                 col1, col2 = st.columns(2)
                 with col1:
                     st.text_input("New supplier name", value=scan["supplier_input"], key="inv_new_supplier_name")
-                    st.text_input("UEN / Tax number", key="inv_new_supplier_uen")
-                    st.text_input("Email", key="inv_new_supplier_email")
+                    st.text_input("UEN / Tax number", value=scan.get("supplier_uen", ""), key="inv_new_supplier_uen")
+                    st.text_input("Email", value=scan.get("supplier_email", ""), key="inv_new_supplier_email")
                 with col2:
-                    st.text_input("Contact number", key="inv_new_supplier_phone")
-                    st.text_input("Address", key="inv_new_supplier_address")
+                    st.text_input("Contact number", value=scan.get("supplier_phone", ""), key="inv_new_supplier_phone")
+                    st.text_input("Address", value=scan.get("supplier_address", ""), key="inv_new_supplier_address")
                     st.text_input("Payment terms", key="inv_new_supplier_terms")
                     st.text_input("Delivery days", key="inv_new_supplier_days")
             elif all_supplier_names:
