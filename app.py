@@ -2718,6 +2718,9 @@ elif page == "Invoices":
                 st.info("No existing suppliers to match to — use 'Create a new supplier' instead.")
 
         # ---- Line items ----
+        INV_CATEGORIES = ["Dairy", "Dry Goods", "Frozen", "Meat & Seafood", "Pantry", "Produce", "Other"]
+        INV_UNIT_MAP = {"g": ("g", 1), "Kg": ("g", 1000), "ml": ("ml", 1), "L": ("ml", 1000), "Each": ("each", 1)}
+
         for idx, row in enumerate(scan["rows"]):
             st.markdown("---")
             cols = st.columns([3, 2, 2])
@@ -2737,16 +2740,24 @@ elif page == "Invoices":
                     nc1, nc2, nc3 = st.columns(3)
                     with nc1:
                         st.text_input("Ingredient name", value=row["description"], key=f"inv_new_ing_name_{idx}")
-                        st.text_input("Category", key=f"inv_new_ing_category_{idx}")
+                        st.multiselect(
+                            "Category", INV_CATEGORIES,
+                            default=[], key=f"inv_new_ing_category_{idx}"
+                        )
                     with nc2:
-                        st.selectbox("Base unit", ["g", "ml", "each"], key=f"inv_new_ing_unit_{idx}")
+                        selected_unit = st.selectbox(
+                            "Unit", list(INV_UNIT_MAP.keys()),
+                            key=f"inv_new_ing_display_unit_{idx}"
+                        )
                         st.number_input(
-                            "Purchase quantity (in base unit)", min_value=0.0, step=1.0,
-                            key=f"inv_new_ing_qty_{idx}"
+                            f"Purchase quantity ({selected_unit})", min_value=0.0, step=1.0,
+                            key=f"inv_new_ing_display_qty_{idx}"
                         )
                     with nc3:
                         st.number_input(
-                            "Recipe unit size (e.g. 100 for '100g')", min_value=0.0, step=1.0, value=100.0,
+                            "Recipe portion size",
+                            min_value=0.0, step=1.0, value=1.0,
+                            help="How much of this ingredient does one recipe step typically use? Leave at 1 if you're not sure.",
                             key=f"inv_new_ing_recipe_unit_{idx}"
                         )
                         st.text_input("Purchase size label", value=row["pack_size"], key=f"inv_new_ing_size_label_{idx}")
@@ -2756,11 +2767,19 @@ elif page == "Invoices":
                     f"{badge}  \nMatched: **{row['matched_ingredient']}**  \n"
                     f"${row['old_price']:.2f} → ${row['new_price']:.2f} ({row['pct_change']:+.1f}%)"
                 )
-                st.checkbox(
+                apply_checked = st.checkbox(
                     f"Apply this price update to {row['matched_ingredient']}",
                     value=(row["status"] == "auto"),
                     key=f"inv_apply_{idx}"
                 )
+                # Always show a "change match" override dropdown so wrong fuzzy matches can be corrected
+                with st.expander("Wrong match? Change it"):
+                    override_options = ["-- keep current match --", "+ Create new ingredient"] + all_ingredient_names
+                    st.selectbox(
+                        "Match to a different ingredient instead",
+                        override_options,
+                        key=f"inv_override_{idx}"
+                    )
 
         st.markdown("---")
         if st.button("Apply confirmed changes"):
@@ -2810,8 +2829,13 @@ elif page == "Invoices":
 
                     if chosen == "+ Create new ingredient":
                         new_name = st.session_state.get(f"inv_new_ing_name_{idx}", "").strip()
-                        new_qty = st.session_state.get(f"inv_new_ing_qty_{idx}", 0)
-                        if new_name and new_qty and new_qty > 0:
+                        display_unit = st.session_state.get(f"inv_new_ing_display_unit_{idx}", "g")
+                        display_qty = st.session_state.get(f"inv_new_ing_display_qty_{idx}", 0)
+                        base_unit, factor = INV_UNIT_MAP.get(display_unit, ("g", 1))
+                        purchase_qty = display_qty * factor
+                        categories = st.session_state.get(f"inv_new_ing_category_{idx}", [])
+                        category_str = ", ".join(categories) if categories else ""
+                        if new_name and purchase_qty > 0:
                             conn.execute("""
                                 INSERT INTO ingredients
                                     (name, category, primary_supplier_id, backup_supplier_id,
@@ -2820,13 +2844,13 @@ elif page == "Invoices":
                                 VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)
                             """, (
                                 new_name,
-                                st.session_state.get(f"inv_new_ing_category_{idx}", ""),
+                                category_str,
                                 resolved_supplier_id,
                                 st.session_state.get(f"inv_new_ing_size_label_{idx}", row["pack_size"]),
-                                new_qty,
-                                st.session_state.get(f"inv_new_ing_unit_{idx}", "g"),
+                                purchase_qty,
+                                base_unit,
                                 row["new_price"],
-                                st.session_state.get(f"inv_new_ing_recipe_unit_{idx}", 100.0),
+                                st.session_state.get(f"inv_new_ing_recipe_unit_{idx}", 1.0),
                                 date.today().isoformat()
                             ))
                             conn.execute(
@@ -2848,7 +2872,25 @@ elif page == "Invoices":
                         )
                         applied_count += 1
                 else:
-                    if st.session_state.get(f"inv_apply_{idx}"):
+                    # Check if the user chose to override the fuzzy match
+                    override = st.session_state.get(f"inv_override_{idx}", "-- keep current match --")
+                    if override and override not in ("-- keep current match --", "+ Create new ingredient"):
+                        # Apply the price update to the override target instead
+                        if st.session_state.get(f"inv_apply_{idx}"):
+                            old = conn.execute("SELECT purchase_price FROM ingredients WHERE name = ?", (override,)).fetchone()
+                            old_price = old["purchase_price"] if old else None
+                            pct = ((row["new_price"] - old_price) / old_price * 100) if old_price else None
+                            conn.execute(
+                                "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
+                                (row["new_price"], date.today().isoformat(), override)
+                            )
+                            conn.execute(
+                                "INSERT INTO invoice_log (scanned_at, supplier_name, ingredient_name, old_price, new_price, pct_change, applied_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                                (date.today().isoformat(), log_supplier_label, override,
+                                 old_price, row["new_price"], pct, current_user["name"])
+                            )
+                            applied_count += 1
+                    elif st.session_state.get(f"inv_apply_{idx}"):
                         conn.execute(
                             "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
                             (row["new_price"], date.today().isoformat(), row["matched_ingredient"])
