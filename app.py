@@ -143,155 +143,142 @@ if _menu_token:
     event_dt = datetime.strptime(event_date, "%Y-%m-%d")
     today = datetime.today()
     cutoff = (event_dt - timedelta(days=3)).date()
-    expired = (today.date() > event_dt.date() + timedelta(days=1))
-    locked = (today.date() > cutoff)
+    expired = today.date() > event_dt.date() + timedelta(days=1)
+    locked = today.date() > cutoff
+    pax_count = menu["pax_count"]
 
-    # Header
+    # ---- Page style ----
+    st.markdown("""
+    <style>
+    .gd-header{text-align:center;padding:2rem 0 1rem}
+    .gd-header h1{color:#FF8C73;font-size:2rem;margin-bottom:0.2rem}
+    .gd-header h2{font-size:1.1rem;font-weight:400;color:#666}
+    .section-label{font-size:1.1rem;font-weight:700;margin:1.2rem 0 0.4rem}
+    </style>
+    """, unsafe_allow_html=True)
+
     st.markdown(f"""
-    <div style='text-align:center;padding:1.5rem 0 0.5rem'>
-    <h1 style='color:#FF8C73'>🍽️ The Tea Party Cafe</h1>
+    <div class="gd-header">
+    <h1>🍽️ The Tea Party Cafe</h1>
     <h2>Group Dining — Set Menu Selection</h2>
     </div>
     """, unsafe_allow_html=True)
 
+    # Event summary card
     with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Guest", menu["customer_name"])
-        c2.metric("Date", event_date)
-        c3.metric("Party size", f"{menu['pax_count']} pax")
-        c4.metric("Base price", f"${menu['base_price_per_pax']:.2f}/pax")
+        c1.metric("Booking for", menu["customer_name"])
+        c2.metric("Event date", event_date)
+        c3.metric("Party size", f"{pax_count} pax")
+        c4.metric("Base price", f"${menu['base_price_per_pax']:.2f} / pax")
+
+    # Fixed included items
+    fixed_sections = [s for s in menu_data["sections"] if s["type"] == "fixed_included"]
+    if fixed_sections:
+        with st.expander("✅ Already included for everyone"):
+            for sec in fixed_sections:
+                items_str = " · ".join(it["name"] for it in sec["items"])
+                st.write(f"**{sec['name']}:** {items_str}")
 
     if expired:
         st.warning("This event has passed. The selection form is now closed.")
         sub = db.get_group_submission(menu["id"])
         if sub:
-            st.success("Your selections were submitted.")
+            st.success("Your selections were submitted — thank you!")
         st.stop()
 
     if locked:
-        st.info(f"Selections are now locked (3 days before the event). Please contact us directly if changes are needed.")
+        st.info(f"The selection deadline was **{cutoff.strftime('%d %B %Y')}**. Please contact us directly for any changes.")
         sub = db.get_group_submission(menu["id"])
         if sub:
             sel = _json.loads(sub["selections_json"])
             st.subheader("Your submitted selections")
-            for i, pax in enumerate(sel.get("per_pax", []), 1):
-                st.write(f"**Guest {i}:** " + " | ".join(f"{k}: {v}" for k, v in pax.items() if v))
-            if sel.get("addons"):
-                st.write("**Add-ons:** " + ", ".join(f"{k} ×{v}" for k, v in sel["addons"].items() if v and v > 0))
-            st.metric("Total", f"${sub['total_amount']:.2f}")
+            for section_name, choices in sel.get("sections", {}).items():
+                for item_name, qty in choices.items():
+                    if qty > 0:
+                        st.write(f"**{item_name}** × {qty}")
+            st.metric("Total amount", f"${sub['total_amount']:.2f}")
         st.stop()
 
-    # Load existing submission if any
+    # Load existing submission
     existing_sub = db.get_group_submission(menu["id"])
-    existing_sel = _json.loads(existing_sub["selections_json"]) if existing_sub else None
+    existing_sel = _json.loads(existing_sub["selections_json"]) if existing_sub else {}
 
-    # Build the per-pax and addon sections
-    per_pax_sections = [s for s in menu_data["sections"] if s["type"] == "per_pax_choice"]
-    addon_sections = [s for s in menu_data["sections"] if s["type"] == "optional_addon"]
-    fixed_sections = [s for s in menu_data["sections"] if s["type"] == "fixed_included"]
+    # ---- SELECTION FORM ----
+    # For each selectable section, show a quantity input per item.
+    # The customer just enters how many of each they want — simple.
+    selectable_sections = [s for s in menu_data["sections"] if s["type"] in ("per_pax_choice", "optional_addon")]
+    surcharge_map = {}
+    section_selections = {}
 
-    if fixed_sections:
-        with st.expander("✅ Already included in your set"):
-            for sec in fixed_sections:
-                items_str = ", ".join(it["name"] for it in sec["items"])
-                st.write(f"**{sec['name']}:** {items_str}")
+    for sec in selectable_sections:
+        is_required = sec["type"] == "per_pax_choice"
+        label_suffix = f" — choose up to {pax_count} total" if is_required else " — optional add-ons"
+        st.markdown(f'<div class="section-label">{sec["name"]}{label_suffix}</div>', unsafe_allow_html=True)
 
-    st.subheader("Choose for each guest")
-    pax_count = menu["pax_count"]
-    per_pax_selections = []
-    for pax_idx in range(pax_count):
         with st.container(border=True):
-            st.markdown(f"**Guest {pax_idx + 1}**")
-            pax_row = {}
-            cols = st.columns(len(per_pax_sections))
-            for sec_idx, sec in enumerate(per_pax_sections):
-                with cols[sec_idx]:
-                    options = [
-                        f"{it['name']}" + (f" (+${it['surcharge']:.2f})" if it['surcharge'] > 0 else "")
-                        for it in sec["items"]
-                    ]
-                    existing_val = None
-                    if existing_sel:
-                        existing_val = existing_sel.get("per_pax", [{}] * pax_count)[pax_idx].get(sec["name"])
-                    default_idx = 0
-                    if existing_val:
-                        for i, it in enumerate(sec["items"]):
-                            if it["name"] in (existing_val or ""):
-                                default_idx = i
-                                break
-                    chosen_str = st.selectbox(
-                        sec["name"],
-                        options,
-                        index=default_idx,
-                        key=f"pax_{pax_idx}_{sec['name']}"
-                    )
-                    chosen_name = sec["items"][options.index(chosen_str)]["name"]
-                    pax_row[sec["name"]] = chosen_name
-            per_pax_selections.append(pax_row)
+            item_qtys = {}
+            for it in sec["items"]:
+                surcharge_map[it["name"]] = it.get("surcharge", 0.0)
+                price_label = f"  **+${it['surcharge']:.2f}**" if it.get("surcharge", 0) > 0 else "  *(included in base price)*"
+                desc = it.get("description", "")
+                existing_qty = existing_sel.get("sections", {}).get(sec["name"], {}).get(it["name"], 0)
 
-    st.subheader("Add-ons (optional)")
-    addon_selections = {}
-    if addon_sections:
-        for sec in addon_sections:
-            with st.container(border=True):
-                st.markdown(f"**{sec['name']}**")
-                for it in sec["items"]:
-                    price_str = f"+${it['surcharge']:.2f}" if it['surcharge'] > 0 else "Included"
-                    existing_qty = 0
-                    if existing_sel:
-                        existing_qty = existing_sel.get("addons", {}).get(it["name"], 0)
+                col_a, col_b = st.columns([3, 1])
+                with col_a:
+                    st.write(f"**{it['name']}**{price_label}")
+                    if desc:
+                        st.caption(desc)
+                with col_b:
                     qty = st.number_input(
-                        f"{it['name']} — {price_str}",
-                        min_value=0, max_value=pax_count * 3,
-                        value=existing_qty,
-                        key=f"addon_{it['name']}"
+                        "Qty", min_value=0, max_value=pax_count * 2,
+                        value=int(existing_qty),
+                        key=f"sel_{sec['name']}_{it['name']}",
+                        label_visibility="collapsed"
                     )
-                    if qty > 0:
-                        addon_selections[it["name"]] = qty
+                item_qtys[it["name"]] = qty
+            section_selections[sec["name"]] = item_qtys
 
-    if addon_sections:
-        addon_price_map = {it["name"]: it["surcharge"] for sec in addon_sections for it in sec["items"]}
-
-    # Compute total
+    # ---- Live total ----
     base_total = pax_count * menu["base_price_per_pax"]
-    pax_surcharges = 0.0
-    surcharge_map = {it["name"]: it["surcharge"] for sec in per_pax_sections for it in sec["items"]}
-    for pax_row in per_pax_selections:
-        for item_name in pax_row.values():
-            pax_surcharges += surcharge_map.get(item_name, 0.0)
-    addon_total = sum(
-        addon_price_map.get(name, 0) * qty
-        for name, qty in addon_selections.items()
-    ) if addon_sections else 0.0
-    grand_total = base_total + pax_surcharges + addon_total
+    surcharge_total = sum(
+        surcharge_map.get(item_name, 0) * qty
+        for sec_items in section_selections.values()
+        for item_name, qty in sec_items.items()
+    )
+    grand_total = base_total + surcharge_total
 
+    st.markdown("---")
     with st.container(border=True):
-        sc1, sc2, sc3 = st.columns(3)
-        sc1.metric("Base", f"${base_total:.2f}", f"{pax_count} × ${menu['base_price_per_pax']:.2f}")
-        sc2.metric("Surcharges", f"${pax_surcharges + addon_total:.2f}")
-        sc3.metric("Total", f"${grand_total:.2f}", delta_color="off")
+        tc1, tc2, tc3 = st.columns(3)
+        tc1.metric("Base", f"${base_total:.2f}", f"{pax_count} pax × ${menu['base_price_per_pax']:.2f}")
+        tc2.metric("Surcharges", f"${surcharge_total:.2f}")
+        tc3.metric("💰 Total", f"${grand_total:.2f}", delta_color="off")
 
     st.caption(f"Selections must be finalised by **{cutoff.strftime('%d %B %Y')}** (3 days before the event).")
-    dietary = st.text_area("Dietary restrictions or notes (optional)",
-                            value=existing_sub["dietary_notes"] if existing_sub and existing_sub["dietary_notes"] else "",
-                            key="dietary_notes")
+
+    dietary = st.text_area(
+        "Dietary restrictions or special requests (optional)",
+        value=existing_sub["dietary_notes"] if existing_sub and existing_sub["dietary_notes"] else ""
+    )
 
     btn_label = "Update selections" if existing_sub else "Submit selections"
     if st.button(btn_label, type="primary", width="stretch"):
-        final_sel = _json.dumps({"per_pax": per_pax_selections, "addons": addon_selections})
+        final_sel = _json.dumps({"sections": section_selections})
         conn = db.get_connection()
         now = datetime.now().isoformat()
         if existing_sub:
             conn.execute(
                 "UPDATE group_dining_submissions SET selections_json=?, dietary_notes=?, "
                 "total_base=?, total_surcharges=?, total_amount=?, updated_at=? WHERE id=?",
-                (final_sel, dietary, base_total, pax_surcharges + addon_total, grand_total, now, existing_sub["id"])
+                (final_sel, dietary, base_total, surcharge_total, grand_total, now, existing_sub["id"])
             )
         else:
             conn.execute(
-                "INSERT INTO group_dining_submissions (menu_id, selections_json, dietary_notes, "
-                "total_base, total_surcharges, total_amount, submitted_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-                (menu["id"], final_sel, dietary, base_total, pax_surcharges + addon_total, grand_total, now, now)
+                "INSERT INTO group_dining_submissions "
+                "(menu_id, selections_json, dietary_notes, total_base, total_surcharges, total_amount, submitted_at, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (menu["id"], final_sel, dietary, base_total, surcharge_total, grand_total, now, now)
             )
         conn.commit()
         conn.close()
@@ -2431,12 +2418,14 @@ elif page == "Group Dining":
                         st.write(f"✅ **Selections received** | Total: **${sub['total_amount']:.2f}** | Updated: {sub['updated_at'][:10]}")
 
                         with st.expander("View selections"):
-                            per_pax = sel.get("per_pax", [])
-                            for i, pax_row in enumerate(per_pax, 1):
-                                st.write(f"**Guest {i}:** " + " | ".join(f"{k}: {v}" for k, v in pax_row.items()))
-                            addons = sel.get("addons", {})
-                            if addons:
-                                st.write("**Add-ons:** " + ", ".join(f"{k} ×{v}" for k, v in addons.items()))
+                            sel_data = sel.get("sections", {})
+                            for section_name, items in sel_data.items():
+                                has_any = any(q > 0 for q in items.values())
+                                if has_any:
+                                    st.markdown(f"**{section_name}**")
+                                    for item_name, qty in items.items():
+                                        if qty > 0:
+                                            st.write(f"  {item_name} × {qty}")
                             if sub["dietary_notes"]:
                                 st.write(f"**Dietary notes:** {sub['dietary_notes']}")
 
@@ -2449,16 +2438,16 @@ elif page == "Group Dining":
                         import io as _io, csv as _csv
                         csv_buf = _io.StringIO()
                         writer = _csv.writer(csv_buf)
-                        writer.writerow(["Guest", "Section", "Choice"])
-                        for i, pax_row in enumerate(per_pax, 1):
-                            for sec, choice in pax_row.items():
-                                writer.writerow([f"Guest {i}", sec, choice])
-                        for addon_name, qty in sel.get("addons", {}).items():
-                            writer.writerow(["Add-on", addon_name, qty])
+                        writer.writerow(["Section", "Item", "Quantity"])
+                        sel_data = sel.get("sections", {})
+                        for section_name, items in sel_data.items():
+                            for item_name, qty in items.items():
+                                if qty > 0:
+                                    writer.writerow([section_name, item_name, qty])
                         writer.writerow([])
-                        writer.writerow(["Base total", sub["total_base"]])
-                        writer.writerow(["Surcharges", sub["total_surcharges"]])
-                        writer.writerow(["Grand total", sub["total_amount"]])
+                        writer.writerow(["Base total", "", sub["total_base"]])
+                        writer.writerow(["Surcharges", "", sub["total_surcharges"]])
+                        writer.writerow(["Grand total", "", sub["total_amount"]])
                         st.download_button(
                             "Download selections CSV",
                             data=csv_buf.getvalue(),
