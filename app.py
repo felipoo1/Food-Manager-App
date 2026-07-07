@@ -307,19 +307,26 @@ if _menu_token:
         final_sel = _json.dumps({"sections": section_selections})
         conn = db.get_connection()
         now = datetime.now().isoformat()
-        if existing_sub:
-            conn.execute(
-                "UPDATE group_dining_submissions SET selections_json=?, dietary_notes=?, "
-                "total_base=?, total_surcharges=?, total_amount=?, updated_at=? WHERE id=?",
-                (final_sel, dietary, base_total, surcharge_total, grand_total, now, existing_sub["id"])
-            )
-        else:
-            conn.execute(
-                "INSERT INTO group_dining_submissions "
-                "(menu_id, selections_json, dietary_notes, total_base, total_surcharges, total_amount, submitted_at, updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (menu["id"], final_sel, dietary, base_total, surcharge_total, grand_total, now, now)
-            )
+        # Use INSERT ... ON CONFLICT (menu_id) DO UPDATE so that:
+        # (a) the first submission creates a new row, and
+        # (b) any subsequent submission for the SAME menu_id updates that
+        #     same row rather than either failing or creating a duplicate.
+        # This is safe against race conditions — the UNIQUE constraint on
+        # menu_id means two concurrent submits can never both INSERT; the
+        # loser of the race will execute the UPDATE path instead.
+        conn.execute("""
+            INSERT INTO group_dining_submissions
+                (menu_id, selections_json, dietary_notes, total_base, total_surcharges,
+                 total_amount, submitted_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (menu_id) DO UPDATE SET
+                selections_json  = EXCLUDED.selections_json,
+                dietary_notes    = EXCLUDED.dietary_notes,
+                total_base       = EXCLUDED.total_base,
+                total_surcharges = EXCLUDED.total_surcharges,
+                total_amount     = EXCLUDED.total_amount,
+                updated_at       = EXCLUDED.updated_at
+        """, (menu["id"], final_sel, dietary, base_total, surcharge_total, grand_total, now, now))
         conn.commit()
         conn.close()
         st.success("✅ Selections saved! You can update these until 3 days before the event.")
@@ -2493,11 +2500,11 @@ elif page == "Group Dining":
 
     # ---- LIST VIEW ----
     elif st.session_state.gd_mode == "list":
-        conn = db.get_connection()
-        menus = conn.execute(
-            "SELECT * FROM group_menus WHERE is_active = 1 ORDER BY event_date DESC"
-        ).fetchall()
-        conn.close()
+        # Use the joined query — each row contains a menu + its own submission
+        # (or None for the submission fields if not yet submitted). This
+        # eliminates any risk of one customer's submission being shown against
+        # another customer's menu.
+        menus = db.get_all_active_group_menus()
 
         if st.session_state.get("gd_new_token"):
             app_url = "https://tpcafe-app.streamlit.app"
@@ -2511,7 +2518,8 @@ elif page == "Group Dining":
             st.info("No group dining menus yet. Upload one above.")
         else:
             for m in menus:
-                sub = db.get_group_submission(m["id"])
+                # sub_id is None when no submission exists for this menu
+                has_submission = m["sub_id"] is not None
                 with st.container(border=True):
                     h1, h2, h3, h4 = st.columns([3, 2, 2, 2])
                     h1.write(f"**{m['customer_name']}**")
@@ -2523,9 +2531,9 @@ elif page == "Group Dining":
                     link = f"{app_url}/?menu={m['access_token']}"
                     st.code(link, language=None)
 
-                    if sub:
-                        sel = _gdj.loads(sub["selections_json"])
-                        st.write(f"✅ **Selections received** | Total: **${sub['total_amount']:.2f}** | Updated: {sub['updated_at'][:10]}")
+                    if has_submission:
+                        sel = _gdj.loads(m["selections_json"])
+                        st.write(f"✅ **Selections received** | Total: **${m['total_amount']:.2f}** | Updated: {m['sub_updated_at'][:10]}")
 
                         with st.expander("View selections"):
                             sel_data = sel.get("sections", {})
@@ -2536,13 +2544,13 @@ elif page == "Group Dining":
                                     for item_name, qty in items.items():
                                         if qty > 0:
                                             st.write(f"  {item_name} × {qty}")
-                            if sub["dietary_notes"]:
-                                st.write(f"**Dietary notes:** {sub['dietary_notes']}")
+                            if m["dietary_notes"]:
+                                st.write(f"**Dietary notes:** {m['dietary_notes']}")
 
                             bc1, bc2, bc3 = st.columns(3)
-                            bc1.metric("Base", f"${sub['total_base']:.2f}")
-                            bc2.metric("Surcharges", f"${sub['total_surcharges']:.2f}")
-                            bc3.metric("Total", f"${sub['total_amount']:.2f}")
+                            bc1.metric("Base", f"${m['total_base']:.2f}")
+                            bc2.metric("Surcharges", f"${m['total_surcharges']:.2f}")
+                            bc3.metric("Total", f"${m['total_amount']:.2f}")
 
                         # Download as CSV
                         import io as _io, csv as _csv
@@ -2555,9 +2563,9 @@ elif page == "Group Dining":
                                 if qty > 0:
                                     writer.writerow([section_name, item_name, qty])
                         writer.writerow([])
-                        writer.writerow(["Base total", "", sub["total_base"]])
-                        writer.writerow(["Surcharges", "", sub["total_surcharges"]])
-                        writer.writerow(["Grand total", "", sub["total_amount"]])
+                        writer.writerow(["Base total", "", m["total_base"]])
+                        writer.writerow(["Surcharges", "", m["total_surcharges"]])
+                        writer.writerow(["Grand total", "", m["total_amount"]])
                         st.download_button(
                             "Download selections CSV",
                             data=csv_buf.getvalue(),
@@ -2569,31 +2577,29 @@ elif page == "Group Dining":
                         # Xero billing
                         st.write("")
                         st.write("**Xero billing**")
-                        if sub["xero_invoice_id"]:
-                            st.success(f"Invoice already sent to Xero: `{sub['xero_invoice_id']}`")
+                        if m["xero_invoice_id"]:
+                            st.success(f"Invoice already sent to Xero: `{m['xero_invoice_id']}`")
                         else:
                             if st.button("Send invoice to Xero", key=f"xero_{m['id']}"):
                                 st.session_state[f"xero_confirm_{m['id']}"] = True
                                 st.rerun()
 
                         if st.session_state.get(f"xero_confirm_{m['id']}"):
-                            st.warning(f"Create a Xero invoice for **{m['customer_name']}** for **${sub['total_amount']:.2f}**?")
+                            st.warning(f"Create a Xero invoice for **{m['customer_name']}** for **${m['total_amount']:.2f}**?")
                             xc1, xc2 = st.columns(2)
                             with xc1:
                                 if st.button("Confirm — send to Xero", type="primary", key=f"xero_go_{m['id']}"):
                                     with st.spinner("Creating invoice in Xero..."):
                                         try:
-                                            menu_data = _gdj.loads(m["menu_json"])
-                                            sel_data = _gdj.loads(sub["selections_json"])
                                             line_items = [
                                                 {"description": f"Set menu base — {m['pax_count']} pax × ${m['base_price_per_pax']:.2f}",
                                                  "quantity": m["pax_count"], "unitAmount": m["base_price_per_pax"],
                                                  "accountCode": "200"}
                                             ]
-                                            if sub["total_surcharges"] > 0:
+                                            if m["total_surcharges"] and m["total_surcharges"] > 0:
                                                 line_items.append({
                                                     "description": "Menu surcharges (premium selections)",
-                                                    "quantity": 1, "unitAmount": sub["total_surcharges"],
+                                                    "quantity": 1, "unitAmount": m["total_surcharges"],
                                                     "accountCode": "200"
                                                 })
                                             import anthropic as _ac
@@ -2614,8 +2620,8 @@ elif page == "Group Dining":
                                             )
                                             conn = db.get_connection()
                                             conn.execute(
-                                                "UPDATE group_dining_submissions SET xero_invoice_id = ? WHERE id = ?",
-                                                (invoice_id, sub["id"])
+                                                "UPDATE group_dining_submissions SET xero_invoice_id = ? WHERE menu_id = ?",
+                                                (invoice_id, m["id"])
                                             )
                                             conn.commit()
                                             conn.close()

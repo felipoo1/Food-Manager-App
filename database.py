@@ -375,8 +375,8 @@ def init_db():
     cur.execute("""
         CREATE TABLE IF NOT EXISTS group_dining_submissions (
             id SERIAL PRIMARY KEY,
-            menu_id INTEGER NOT NULL,
-            selections_json TEXT,   -- JSON: per-pax choices + add-ons
+            menu_id INTEGER NOT NULL UNIQUE,  -- one submission per menu, enforced at DB level
+            selections_json TEXT,   -- JSON: per-section choices + quantities
             dietary_notes TEXT,
             total_base REAL,
             total_surcharges REAL,
@@ -387,6 +387,25 @@ def init_db():
             FOREIGN KEY (menu_id) REFERENCES group_menus(id) ON DELETE CASCADE
         )
     """)
+
+    # Safe migration: add UNIQUE constraint if table already exists without it.
+    # In Postgres we can't ALTER TABLE ADD CONSTRAINT if it already exists,
+    # so we check the information_schema first.
+    cur.execute("""
+        SELECT COUNT(*) FROM information_schema.table_constraints
+        WHERE table_name = 'group_dining_submissions'
+        AND constraint_type = 'UNIQUE'
+        AND constraint_name = 'group_dining_submissions_menu_id_key'
+    """)
+    row = cur.fetchone()
+    if row and (row[0] == 0):
+        try:
+            cur.execute("""
+                ALTER TABLE group_dining_submissions
+                ADD CONSTRAINT group_dining_submissions_menu_id_key UNIQUE (menu_id)
+            """)
+        except Exception:
+            pass  # already exists or not needed
 
     conn.commit()
     conn.close()
@@ -900,16 +919,54 @@ def get_group_menu_by_token(token, conn=None):
 
 
 def get_group_submission(menu_id, conn=None):
-    """Returns the current submission for a menu, or None."""
+    """
+    Returns the submission for a specific menu, or None if not yet submitted.
+    Each menu can only ever have ONE submission (enforced by the UNIQUE
+    constraint on menu_id in group_dining_submissions), so this is always
+    unambiguous. The ORDER BY id DESC is a safety belt in case of any
+    historical duplicates from before the constraint was added.
+    """
     owns_conn = conn is None
     if owns_conn:
         conn = get_connection()
     row = conn.execute(
-        "SELECT * FROM group_dining_submissions WHERE menu_id = ?", (menu_id,)
+        "SELECT * FROM group_dining_submissions WHERE menu_id = ? ORDER BY id DESC LIMIT 1",
+        (menu_id,)
     ).fetchone()
     if owns_conn:
         conn.close()
     return row
+
+
+def get_all_active_group_menus(conn=None):
+    """
+    Returns all active group menus with their latest submission (if any),
+    explicitly joined so each menu row is always paired with its own
+    submission and never with another customer's.
+    """
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+    rows = conn.execute("""
+        SELECT
+            gm.*,
+            gds.id          AS sub_id,
+            gds.selections_json,
+            gds.dietary_notes,
+            gds.total_base,
+            gds.total_surcharges,
+            gds.total_amount,
+            gds.submitted_at,
+            gds.updated_at  AS sub_updated_at,
+            gds.xero_invoice_id
+        FROM group_menus gm
+        LEFT JOIN group_dining_submissions gds ON gds.menu_id = gm.id
+        WHERE gm.is_active = 1
+        ORDER BY gm.event_date DESC, gm.customer_name
+    """).fetchall()
+    if owns_conn:
+        conn.close()
+    return rows
 
 
 def find_best_match(target_text, candidates):
