@@ -147,49 +147,54 @@ if _menu_token:
     locked = today.date() > cutoff
     pax_count = menu["pax_count"]
 
-    # ---- Page style ----
+    # ---- Customer form: restaurant-style ----
     st.markdown("""
     <style>
-    .gd-header{text-align:center;padding:2rem 0 1rem}
-    .gd-header h1{color:#FF8C73;font-size:2rem;margin-bottom:0.2rem}
-    .gd-header h2{font-size:1.1rem;font-weight:400;color:#666}
-    .section-label{font-size:1.1rem;font-weight:700;margin:1.2rem 0 0.4rem}
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    .gd-hero{background:#1E293B;border-radius:12px;padding:28px 28px 24px;margin-bottom:20px;position:relative;overflow:hidden}
+    .gd-hero::after{content:'';position:absolute;right:-30px;top:-30px;width:180px;height:180px;border-radius:50%;background:rgba(242,100,25,0.12)}
+    .gd-hero-tag{background:#F26419;color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px;display:inline-block;margin-bottom:10px;letter-spacing:0.8px}
+    .gd-hero-name{font-size:24px;font-weight:700;color:#fff;margin-bottom:3px}
+    .gd-hero-sub{font-size:14px;color:#94A3B8}
+    .gd-hero-pills{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+    .gd-pill{background:rgba(255,255,255,0.1);color:#CBD5E1;font-size:12px;padding:5px 12px;border-radius:20px}
+    .gd-section-head{display:flex;align-items:center;gap:10px;margin:20px 0 10px}
+    .gd-section-title{font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.8px}
+    .gd-badge-green{background:#F0FDF4;color:#15803D;font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600}
+    .gd-badge-orange{background:#FFF7F0;color:#C2410C;font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600}
+    .gd-included{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+    .gd-chip{background:#fff;border:1px solid #E2E8F0;border-radius:8px;padding:10px 16px;font-size:13px;color:#475569;display:flex;align-items:center;gap:6px}
+    .gd-chip::before{content:'✓';color:#22C55E;font-weight:700;font-size:14px}
+    .gd-total{background:#1E293B;border-radius:10px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;margin-top:16px}
+    .gd-total-items{display:flex;gap:20px}
+    .gd-total-label{font-size:11px;color:#64748B;margin-bottom:2px}
+    .gd-total-value{font-size:16px;font-weight:700;color:#F1F5F9}
+    .gd-total-grand{font-size:20px;font-weight:700;color:#F26419}
     </style>
     """, unsafe_allow_html=True)
 
     st.markdown(f"""
-    <div class="gd-header">
-    <h1>🍽️ The Tea Party Cafe</h1>
-    <h2>Group Dining — Set Menu Selection</h2>
+    <div class="gd-hero">
+      <div class="gd-hero-tag">GROUP DINING — SET MENU</div>
+      <div class="gd-hero-name">{menu['customer_name']} · {pax_count} pax</div>
+      <div class="gd-hero-sub">{event_date} &nbsp;·&nbsp; ${menu['base_price_per_pax']:.2f} nett per pax</div>
+      <div class="gd-hero-pills">
+        <div class="gd-pill">📅 Selections due by {cutoff.strftime('%d %b %Y')}</div>
+        <div class="gd-pill">✓ Base price confirmed</div>
+      </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Event summary card
-    with st.container(border=True):
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Booking for", menu["customer_name"])
-        c2.metric("Event date", event_date)
-        c3.metric("Party size", f"{pax_count} pax")
-        c4.metric("Base price", f"${menu['base_price_per_pax']:.2f} / pax")
-
-    # Fixed included items — always visible, clearly marked as included
+    # Fixed included items — prominent chips, no expander
     fixed_sections = [s for s in menu_data["sections"] if s["type"] == "fixed_included"]
     if fixed_sections:
-        st.markdown('<div class="section-label">✅ Included for everyone</div>', unsafe_allow_html=True)
-        with st.container(border=True):
-            for sec in fixed_sections:
-                col_a, col_b = st.columns([3, 1])
-                with col_a:
-                    for it in sec["items"]:
-                        desc = it.get("description", "")
-                        st.write(f"**{it['name']}**")
-                        if desc:
-                            st.caption(desc)
-                with col_b:
-                    st.markdown(
-                        "<div style='padding-top:0.3rem;color:#888;font-size:0.85rem'>Included ✓</div>",
-                        unsafe_allow_html=True
-                    )
+        st.markdown('<div class="gd-section-head"><div class="gd-section-title">Included for everyone</div><div class="gd-badge-green">No selection needed</div></div>', unsafe_allow_html=True)
+        chips = ""
+        for sec in fixed_sections:
+            for it in sec["items"]:
+                chips += f'<div class="gd-chip">{it["name"]}</div>'
+        st.markdown(f'<div class="gd-included">{chips}</div>', unsafe_allow_html=True)
+        st.write("")
 
     if expired:
         st.warning("This event has passed. The selection form is now closed.")
@@ -224,8 +229,8 @@ if _menu_token:
 
     for sec in selectable_sections:
         is_required = sec["type"] == "per_pax_choice"
-        label_suffix = f" — choose up to {pax_count} total" if is_required else " — optional add-ons"
-        st.markdown(f'<div class="section-label">{sec["name"]}{label_suffix}</div>', unsafe_allow_html=True)
+        badge = f'<div class="gd-badge-orange">Choose up to {pax_count}</div>' if is_required else '<div class="gd-badge-green">Optional</div>'
+        st.markdown(f'<div class="gd-section-head"><div class="gd-section-title">{sec["name"]}</div>{badge}</div>', unsafe_allow_html=True)
 
         with st.container(border=True):
             item_qtys = {}
@@ -260,11 +265,25 @@ if _menu_token:
     grand_total = base_total + surcharge_total
 
     st.markdown("---")
-    with st.container(border=True):
-        tc1, tc2, tc3 = st.columns(3)
-        tc1.metric("Base", f"${base_total:.2f}", f"{pax_count} pax × ${menu['base_price_per_pax']:.2f}")
-        tc2.metric("Surcharges", f"${surcharge_total:.2f}")
-        tc3.metric("💰 Total", f"${grand_total:.2f}", delta_color="off")
+    st.markdown(f"""
+    <div class="gd-total">
+      <div class="gd-total-items">
+        <div>
+          <div class="gd-total-label">Base ({pax_count} pax × ${menu['base_price_per_pax']:.2f})</div>
+          <div class="gd-total-value">${base_total:.2f}</div>
+        </div>
+        <div>
+          <div class="gd-total-label">Surcharges</div>
+          <div class="gd-total-value">${surcharge_total:.2f}</div>
+        </div>
+        <div style="border-left:1px solid #334155;padding-left:20px">
+          <div class="gd-total-label">Total amount</div>
+          <div class="gd-total-grand">${grand_total:.2f}</div>
+        </div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.write("")
 
     st.caption(f"Selections must be finalised by **{cutoff.strftime('%d %B %Y')}** (3 days before the event).")
 
@@ -362,16 +381,23 @@ if st.session_state.current_user is None:
 current_user = st.session_state.current_user
 is_owner = current_user["role"] == "owner"
 
-# ---------- Sidebar typography (left-aligned, bigger/bolder nav text) ----------
-# Streamlit's theme settings don't expose per-element text alignment or font
-# weight, so this small CSS block fills that one gap. It only targets the
-# sidebar nav buttons/text, nothing else in the app.
-# Note: buttons center their content via a flex container, not just text-align
-# on the inner <p> -- targeting only the <p> (as before) wasn't enough.
+# ---------- Global styling — Option B: Clean Modern ----------
 st.markdown("""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* Sidebar: clean white, left-aligned nav */
+[data-testid="stSidebar"] {
+    border-right: 1px solid #E2E8F0 !important;
+}
 [data-testid="stSidebar"] button {
     justify-content: flex-start !important;
+    border-radius: 6px !important;
+    padding: 6px 12px !important;
+    transition: background 0.15s;
+}
+[data-testid="stSidebar"] button:hover {
+    background: #F8FAFC !important;
 }
 [data-testid="stSidebar"] button div {
     justify-content: flex-start !important;
@@ -379,17 +405,80 @@ st.markdown("""
 }
 [data-testid="stSidebar"] button p {
     text-align: left !important;
-    font-size: 1.05rem !important;
-    font-weight: 600 !important;
+    font-size: 0.92rem !important;
+    font-weight: 500 !important;
+    color: #475569 !important;
 }
+
+/* Active page — orange left accent bar */
 [data-testid="stSidebar"] .stMarkdown p {
-    font-size: 1.05rem !important;
+    font-size: 0.92rem !important;
+    font-weight: 700 !important;
+    color: #F26419 !important;
+    border-left: 3px solid #F26419;
+    padding-left: 10px;
+    margin-left: -1px;
 }
+
+/* Section labels in sidebar */
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
+    font-size: 0.7rem !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+    color: #94A3B8 !important;
+    border-left: none !important;
+    padding-left: 0 !important;
+}
+
+/* Sidebar bottom buttons (notifications, PIN, logout) */
+[data-testid="stSidebar"] .stButton > button {
+    color: #64748B !important;
+    font-size: 0.85rem !important;
+    font-weight: 400 !important;
+}
+
+/* Main content: generous headings */
+h1 { font-size: 1.7rem !important; font-weight: 700 !important; color: #1E293B !important; }
+h2 { font-size: 1.25rem !important; font-weight: 600 !important; color: #1E293B !important; }
+h3 { font-size: 1.05rem !important; font-weight: 600 !important; color: #1E293B !important; }
+
+/* Captions — muted not invisible */
+[data-testid="stCaptionContainer"] p { color: #64748B !important; font-size: 0.82rem !important; }
+
+/* Primary buttons — solid orange */
+[data-testid="stBaseButton-primary"] {
+    background: #F26419 !important;
+    border: none !important;
+    color: #FFFFFF !important;
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+}
+[data-testid="stBaseButton-primary"]:hover {
+    background: #D95410 !important;
+}
+
+/* Containers — white cards with clean border */
+[data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"] {
+    border: 1px solid #E2E8F0 !important;
+    border-radius: 10px !important;
+    background: #FFFFFF !important;
+}
+
+/* Metric cards */
+[data-testid="stMetric"] {
+    background: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 10px;
+    padding: 14px !important;
+}
+[data-testid="stMetricValue"] { font-size: 1.6rem !important; font-weight: 700 !important; color: #1E293B !important; }
+[data-testid="stMetricLabel"] { font-size: 0.75rem !important; font-weight: 600 !important; color: #64748B !important; text-transform: uppercase; letter-spacing: 0.05em; }
 </style>
 """, unsafe_allow_html=True)
 
 # ---------- Sidebar navigation (flat text-style links) ----------
-st.sidebar.markdown("##### Cafe Manager")
+st.sidebar.markdown("##### ☕ Cafe Manager")
 st.sidebar.caption(f"Logged in as **{current_user['name']}** ({current_user['role']})")
 st.sidebar.write("")
 
