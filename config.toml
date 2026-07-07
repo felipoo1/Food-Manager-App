@@ -1,7 +1,7 @@
 [theme]
 primaryColor = "#F26419"
-backgroundColor = "#F8FAFC"
-secondaryBackgroundColor = "#FFFFFF"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F5F5F5"
 textColor = "#1E293B"
 font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap, sans-serif"
 headingFont = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap, sans-serif"
@@ -9,11 +9,11 @@ baseFontSize = 15
 baseFontWeight = 400
 baseRadius = "medium"
 buttonRadius = "medium"
-borderColor = "#E2E8F0"
+borderColor = "#E5E5E5"
 showWidgetBorder = true
 showSidebarBorder = true
 
 [theme.sidebar]
 backgroundColor = "#FFFFFF"
 textColor = "#475569"
-borderColor = "#E2E8F0"
+borderColor = "#E5E5E5"
