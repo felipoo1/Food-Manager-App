@@ -172,13 +172,24 @@ if _menu_token:
         c3.metric("Party size", f"{pax_count} pax")
         c4.metric("Base price", f"${menu['base_price_per_pax']:.2f} / pax")
 
-    # Fixed included items
+    # Fixed included items — always visible, clearly marked as included
     fixed_sections = [s for s in menu_data["sections"] if s["type"] == "fixed_included"]
     if fixed_sections:
-        with st.expander("✅ Already included for everyone"):
+        st.markdown('<div class="section-label">✅ Included for everyone</div>', unsafe_allow_html=True)
+        with st.container(border=True):
             for sec in fixed_sections:
-                items_str = " · ".join(it["name"] for it in sec["items"])
-                st.write(f"**{sec['name']}:** {items_str}")
+                col_a, col_b = st.columns([3, 1])
+                with col_a:
+                    for it in sec["items"]:
+                        desc = it.get("description", "")
+                        st.write(f"**{it['name']}**")
+                        if desc:
+                            st.caption(desc)
+                with col_b:
+                    st.markdown(
+                        "<div style='padding-top:0.3rem;color:#888;font-size:0.85rem'>Included ✓</div>",
+                        unsafe_allow_html=True
+                    )
 
     if expired:
         st.warning("This event has passed. The selection form is now closed.")
