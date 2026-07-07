@@ -8,7 +8,7 @@ Run it with:  streamlit run app.py
 
 import streamlit as st
 import pandas as pd
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import database as db
 import base64
 from app_icon import ICON_BASE64
@@ -140,9 +140,8 @@ if _menu_token:
     import json as _json
     menu_data = _json.loads(menu["menu_json"])
     event_date = menu["event_date"]
-    from datetime import datetime as _dt
-    event_dt = _dt.strptime(event_date, "%Y-%m-%d")
-    today = _dt.today()
+    event_dt = datetime.strptime(event_date, "%Y-%m-%d")
+    today = datetime.today()
     cutoff = (event_dt - timedelta(days=3)).date()
     expired = (today.date() > event_dt.date() + timedelta(days=1))
     locked = (today.date() > cutoff)
@@ -278,7 +277,7 @@ if _menu_token:
                             key="dietary_notes")
 
     btn_label = "Update selections" if existing_sub else "Submit selections"
-    if st.button(btn_label, type="primary", use_container_width=True):
+    if st.button(btn_label, type="primary", width="stretch"):
         final_sel = _json.dumps({"per_pax": per_pax_selections, "addons": addon_selections})
         conn = db.get_connection()
         now = datetime.now().isoformat()
@@ -563,7 +562,7 @@ if page == "Tasks":
         with title_col:
             st.title("Weekly task workspace")
         with btn1:
-            if st.button("Add New Task", type="primary", use_container_width=True):
+            if st.button("Add New Task", type="primary", width="stretch"):
                 st.session_state.task_mode = "add"
                 st.rerun()
 
@@ -891,7 +890,7 @@ elif page == "Stock Take":
             "Flagged?": "🔴 Yes" if r["is_flagged"] else "",
             "Counted by": r["counted_by"],
         } for r in history_rows]
-        st.dataframe(pd.DataFrame(history_data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(history_data), width="stretch", hide_index=True)
 
     st.divider()
     st.subheader("Variance report")
@@ -919,7 +918,7 @@ elif page == "Stock Take":
             "Variance": f"{r['variance']:+g}{r['base_unit']}",
             "Counted by": r["counted_by"],
         } for r in flagged_rows]
-        st.dataframe(pd.DataFrame(variance_data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(variance_data), width="stretch", hide_index=True)
 
 
 # =========================================================
@@ -933,7 +932,7 @@ if page == "Master Stock List":
     with title_col:
         st.title("Master stock list")
     with btn1:
-        if st.button("Add New Ingredient", type="primary", use_container_width=True):
+        if st.button("Add New Ingredient", type="primary", width="stretch"):
             st.session_state.stock_mode = "add"
             st.rerun()
 
@@ -1265,7 +1264,7 @@ elif page == "Recipes":
 
     def render_category_image_or_placeholder(image_url, rtype, height_px=140):
         if image_url:
-            st.image(image_url, use_container_width=True)
+            st.image(image_url, width="stretch")
         else:
             color = TYPE_COLOR.get(rtype, "#999999")
             emoji = TYPE_EMOJI.get(rtype, "🍴")
@@ -1335,7 +1334,7 @@ elif page == "Recipes":
             with tab:
                 top_col1, top_col2 = st.columns([8, 3])
                 with top_col2:
-                    if st.button("New Category", type="primary", use_container_width=True, key=f"newcat_{rtype}"):
+                    if st.button("New Category", type="primary", width="stretch", key=f"newcat_{rtype}"):
                         st.session_state.recipe_active_type = rtype
                         st.session_state.recipe_mode = "add_category"
                         st.rerun()
@@ -1426,15 +1425,15 @@ elif page == "Recipes":
             st.subheader(category["name"])
             st.caption(f"{rtype} category")
         with head_col2:
-            if st.button("Add New Recipe", type="primary", use_container_width=True):
+            if st.button("Add New Recipe", type="primary", width="stretch"):
                 st.session_state.recipe_mode = "add_recipe"
                 st.rerun()
         with head_col3:
-            if st.button("Edit Category", use_container_width=True):
+            if st.button("Edit Category", width="stretch"):
                 st.session_state.recipe_mode = "edit_category"
                 st.rerun()
         with head_col4:
-            if st.button("Remove Category", use_container_width=True):
+            if st.button("Remove Category", width="stretch"):
                 st.session_state.recipe_mode = "remove_category"
                 st.rerun()
 
@@ -1872,7 +1871,7 @@ elif page == "Suppliers":
     with title_col:
         st.title("Suppliers")
     with btn1:
-        if st.button("Add New Supplier", type="primary", use_container_width=True):
+        if st.button("Add New Supplier", type="primary", width="stretch"):
             st.session_state.supplier_mode = "add"
             st.rerun()
 
@@ -2023,7 +2022,7 @@ elif page == "Orders":
     with title_col:
         st.title("Orders")
     with btn1:
-        if st.button("New Order", icon=":material/add:", type="primary", use_container_width=True):
+        if st.button("New Order", icon=":material/add:", type="primary", width="stretch"):
             st.session_state.order_mode = "new"
             st.rerun()
 
@@ -2093,7 +2092,7 @@ elif page == "Orders":
                         link_cols = st.columns(3)
                         with link_cols[0]:
                             if wa_link:
-                                st.link_button("Send via WhatsApp", wa_link, use_container_width=True)
+                                st.link_button("Send via WhatsApp", wa_link, width="stretch")
                             else:
                                 st.caption("No phone number on file for WhatsApp.")
                             if st.button("Mark as sent (WhatsApp)", key=f"mark_sent_{o['id']}"):
@@ -2112,7 +2111,7 @@ elif page == "Orders":
                                 st.rerun()
                         with link_cols[1]:
                             if supplier["email"]:
-                                if st.button("Send Email Now", key=f"send_email_{o['id']}", type="primary", use_container_width=True):
+                                if st.button("Send Email Now", key=f"send_email_{o['id']}", type="primary", width="stretch"):
                                     with st.spinner("Sending..."):
                                         success, error = db.send_order_email(supplier["email"], email_subject, message)
                                     conn = db.get_connection()
@@ -2229,13 +2228,13 @@ elif page == "Orders":
 
                 btn_col1, btn_col2, btn_col3 = st.columns(3)
                 with btn_col1:
-                    if st.button("Cancel", use_container_width=True):
+                    if st.button("Cancel", width="stretch"):
                         st.session_state.order_mode = "list"
                         st.rerun()
                 with btn_col2:
-                    preview_clicked = st.button("Preview", use_container_width=True)
+                    preview_clicked = st.button("Preview", width="stretch")
                 with btn_col3:
-                    create_clicked = st.button("Create Order", type="primary", use_container_width=True)
+                    create_clicked = st.button("Create Order", type="primary", width="stretch")
 
                 if preview_clicked:
                     if item_count == 0:
@@ -2324,7 +2323,7 @@ elif page == "Group Dining":
     with title_col:
         st.title("Group dining")
     with btn1:
-        if st.button("Upload new menu", type="primary", use_container_width=True):
+        if st.button("Upload new menu", type="primary", width="stretch"):
             st.session_state.gd_mode = "upload"
             st.rerun()
 
@@ -2549,7 +2548,7 @@ elif page == "Staff":
     with title_col:
         st.title("Staff & PIN logins")
     with btn1:
-        if st.button("Add New Staff", type="primary", use_container_width=True):
+        if st.button("Add New Staff", type="primary", width="stretch"):
             st.session_state.staff_mode = "add"
             st.rerun()
 
@@ -2765,7 +2764,7 @@ elif page == "Sales Sync":
 
         apply_col, cancel_col = st.columns(2)
         with apply_col:
-            if st.button("Apply confirmed changes", type="primary", use_container_width=True):
+            if st.button("Apply confirmed changes", type="primary", width="stretch"):
                 summary = db.apply_sales_deductions(confirmed_items, unmatched_to_create, review["email_message_id"], current_user["name"])
                 st.success(
                     f"Stock updated for {summary['ingredients_deducted']} ingredient(s)."
@@ -2778,7 +2777,7 @@ elif page == "Sales Sync":
                 del st.session_state.sales_sync_review
                 st.rerun()
         with cancel_col:
-            if st.button("Discard this review", use_container_width=True):
+            if st.button("Discard this review", width="stretch"):
                 del st.session_state.sales_sync_review
                 st.rerun()
 
@@ -2793,7 +2792,7 @@ elif page == "Sales Sync":
         history_data = [{
             "Processed": r["processed_at"], "By": r["processed_by"], "Items matched": r["items_matched"]
         } for r in sync_history]
-        st.dataframe(pd.DataFrame(history_data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(history_data), width="stretch", hide_index=True)
 
 
 # =========================================================
@@ -2881,7 +2880,7 @@ elif page == "Task History":
                 f"↩️ Reverted by {r['reverted_by']} at {r['reverted_at']}" if r["reverted"] else "✅ Completed"
             ),
         } for r in history_rows]
-        st.dataframe(pd.DataFrame(table_data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(table_data), width="stretch", hide_index=True)
         st.caption(f"{len(history_rows)} completion record(s) shown, including any later reverted.")
 
 
@@ -3476,6 +3475,6 @@ elif page == "Invoices":
             "New price": f"${r['new_price']:.2f}",
             "Applied by": r["applied_by"],
         } for r in log_rows]
-        st.dataframe(pd.DataFrame(log_data), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(log_data), width="stretch", hide_index=True)
     else:
         st.write("No invoice-driven price changes yet.")
