@@ -47,7 +47,7 @@ st.markdown(f"""
 # process never fully restarts -- this is what prevents the exact bug where
 # new tables silently don't get created because a stale cached "already set
 # up" result from before the change was reused.
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 
 @st.cache_resource
@@ -124,6 +124,181 @@ def pin_entry_boxes(key_prefix, prefill=None):
 def clear_pin_boxes(key_prefix):
     """Clears a PIN box (e.g. after a wrong attempt) by resetting its session state."""
     st.session_state[f"{key_prefix}_pin"] = ""
+
+
+# ---------- Customer-facing group dining form (no login required) ----------
+# If the URL contains ?menu=TOKEN, skip the PIN gate entirely and show the
+# customer selection form for that specific event. Nothing else in the app
+# is accessible via this route — only the relevant event form.
+_menu_token = st.query_params.get("menu", "")
+if _menu_token:
+    menu = db.get_group_menu_by_token(_menu_token)
+    if menu is None:
+        st.error("This link is invalid or the event has expired.")
+        st.stop()
+
+    import json as _json
+    menu_data = _json.loads(menu["menu_json"])
+    event_date = menu["event_date"]
+    from datetime import datetime as _dt
+    event_dt = _dt.strptime(event_date, "%Y-%m-%d")
+    today = _dt.today()
+    cutoff = (event_dt - timedelta(days=3)).date()
+    expired = (today.date() > event_dt.date() + timedelta(days=1))
+    locked = (today.date() > cutoff)
+
+    # Header
+    st.markdown(f"""
+    <div style='text-align:center;padding:1.5rem 0 0.5rem'>
+    <h1 style='color:#FF8C73'>🍽️ The Tea Party Cafe</h1>
+    <h2>Group Dining — Set Menu Selection</h2>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.container(border=True):
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Guest", menu["customer_name"])
+        c2.metric("Date", event_date)
+        c3.metric("Party size", f"{menu['pax_count']} pax")
+        c4.metric("Base price", f"${menu['base_price_per_pax']:.2f}/pax")
+
+    if expired:
+        st.warning("This event has passed. The selection form is now closed.")
+        sub = db.get_group_submission(menu["id"])
+        if sub:
+            st.success("Your selections were submitted.")
+        st.stop()
+
+    if locked:
+        st.info(f"Selections are now locked (3 days before the event). Please contact us directly if changes are needed.")
+        sub = db.get_group_submission(menu["id"])
+        if sub:
+            sel = _json.loads(sub["selections_json"])
+            st.subheader("Your submitted selections")
+            for i, pax in enumerate(sel.get("per_pax", []), 1):
+                st.write(f"**Guest {i}:** " + " | ".join(f"{k}: {v}" for k, v in pax.items() if v))
+            if sel.get("addons"):
+                st.write("**Add-ons:** " + ", ".join(f"{k} ×{v}" for k, v in sel["addons"].items() if v and v > 0))
+            st.metric("Total", f"${sub['total_amount']:.2f}")
+        st.stop()
+
+    # Load existing submission if any
+    existing_sub = db.get_group_submission(menu["id"])
+    existing_sel = _json.loads(existing_sub["selections_json"]) if existing_sub else None
+
+    # Build the per-pax and addon sections
+    per_pax_sections = [s for s in menu_data["sections"] if s["type"] == "per_pax_choice"]
+    addon_sections = [s for s in menu_data["sections"] if s["type"] == "optional_addon"]
+    fixed_sections = [s for s in menu_data["sections"] if s["type"] == "fixed_included"]
+
+    if fixed_sections:
+        with st.expander("✅ Already included in your set"):
+            for sec in fixed_sections:
+                items_str = ", ".join(it["name"] for it in sec["items"])
+                st.write(f"**{sec['name']}:** {items_str}")
+
+    st.subheader("Choose for each guest")
+    pax_count = menu["pax_count"]
+    per_pax_selections = []
+    for pax_idx in range(pax_count):
+        with st.container(border=True):
+            st.markdown(f"**Guest {pax_idx + 1}**")
+            pax_row = {}
+            cols = st.columns(len(per_pax_sections))
+            for sec_idx, sec in enumerate(per_pax_sections):
+                with cols[sec_idx]:
+                    options = [
+                        f"{it['name']}" + (f" (+${it['surcharge']:.2f})" if it['surcharge'] > 0 else "")
+                        for it in sec["items"]
+                    ]
+                    existing_val = None
+                    if existing_sel:
+                        existing_val = existing_sel.get("per_pax", [{}] * pax_count)[pax_idx].get(sec["name"])
+                    default_idx = 0
+                    if existing_val:
+                        for i, it in enumerate(sec["items"]):
+                            if it["name"] in (existing_val or ""):
+                                default_idx = i
+                                break
+                    chosen_str = st.selectbox(
+                        sec["name"],
+                        options,
+                        index=default_idx,
+                        key=f"pax_{pax_idx}_{sec['name']}"
+                    )
+                    chosen_name = sec["items"][options.index(chosen_str)]["name"]
+                    pax_row[sec["name"]] = chosen_name
+            per_pax_selections.append(pax_row)
+
+    st.subheader("Add-ons (optional)")
+    addon_selections = {}
+    if addon_sections:
+        for sec in addon_sections:
+            with st.container(border=True):
+                st.markdown(f"**{sec['name']}**")
+                for it in sec["items"]:
+                    price_str = f"+${it['surcharge']:.2f}" if it['surcharge'] > 0 else "Included"
+                    existing_qty = 0
+                    if existing_sel:
+                        existing_qty = existing_sel.get("addons", {}).get(it["name"], 0)
+                    qty = st.number_input(
+                        f"{it['name']} — {price_str}",
+                        min_value=0, max_value=pax_count * 3,
+                        value=existing_qty,
+                        key=f"addon_{it['name']}"
+                    )
+                    if qty > 0:
+                        addon_selections[it["name"]] = qty
+
+    if addon_sections:
+        addon_price_map = {it["name"]: it["surcharge"] for sec in addon_sections for it in sec["items"]}
+
+    # Compute total
+    base_total = pax_count * menu["base_price_per_pax"]
+    pax_surcharges = 0.0
+    surcharge_map = {it["name"]: it["surcharge"] for sec in per_pax_sections for it in sec["items"]}
+    for pax_row in per_pax_selections:
+        for item_name in pax_row.values():
+            pax_surcharges += surcharge_map.get(item_name, 0.0)
+    addon_total = sum(
+        addon_price_map.get(name, 0) * qty
+        for name, qty in addon_selections.items()
+    ) if addon_sections else 0.0
+    grand_total = base_total + pax_surcharges + addon_total
+
+    with st.container(border=True):
+        sc1, sc2, sc3 = st.columns(3)
+        sc1.metric("Base", f"${base_total:.2f}", f"{pax_count} × ${menu['base_price_per_pax']:.2f}")
+        sc2.metric("Surcharges", f"${pax_surcharges + addon_total:.2f}")
+        sc3.metric("Total", f"${grand_total:.2f}", delta_color="off")
+
+    st.caption(f"Selections must be finalised by **{cutoff.strftime('%d %B %Y')}** (3 days before the event).")
+    dietary = st.text_area("Dietary restrictions or notes (optional)",
+                            value=existing_sub["dietary_notes"] if existing_sub and existing_sub["dietary_notes"] else "",
+                            key="dietary_notes")
+
+    btn_label = "Update selections" if existing_sub else "Submit selections"
+    if st.button(btn_label, type="primary", use_container_width=True):
+        final_sel = _json.dumps({"per_pax": per_pax_selections, "addons": addon_selections})
+        conn = db.get_connection()
+        now = datetime.now().isoformat()
+        if existing_sub:
+            conn.execute(
+                "UPDATE group_dining_submissions SET selections_json=?, dietary_notes=?, "
+                "total_base=?, total_surcharges=?, total_amount=?, updated_at=? WHERE id=?",
+                (final_sel, dietary, base_total, pax_surcharges + addon_total, grand_total, now, existing_sub["id"])
+            )
+        else:
+            conn.execute(
+                "INSERT INTO group_dining_submissions (menu_id, selections_json, dietary_notes, "
+                "total_base, total_surcharges, total_amount, submitted_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                (menu["id"], final_sel, dietary, base_total, pax_surcharges + addon_total, grand_total, now, now)
+            )
+        conn.commit()
+        conn.close()
+        st.success("✅ Selections saved! You can update these until 3 days before the event.")
+        st.balloons()
+    st.stop()
 
 
 # ---------- PIN login gate ----------
@@ -226,6 +401,7 @@ if is_owner:
     nav_options.append("Task History")
     nav_options.append("Invoices")
     nav_options.append("Staff")
+    nav_options.append("Group Dining")
     nav_options.append("Sales Sync")
     nav_options.append("Data Export")
 
@@ -245,6 +421,7 @@ NAV_ICONS = {
     "Invoices": ":material/receipt_long:",
     "Staff": ":material/group:",
     "Sales Sync": ":material/sync:",
+    "Group Dining": ":material/groups:",
     "Data Export": ":material/download:",
 }
 
@@ -2127,6 +2304,234 @@ elif page == "Orders":
                         st.success(f"Order created for {chosen_supplier_name}.")
                         st.session_state.order_mode = "list"
                         st.rerun()
+
+
+# =========================================================
+# PAGE: GROUP DINING  (owner only)
+# =========================================================
+elif page == "Group Dining":
+    if not is_owner:
+        st.error("This page is restricted to the Owner account.")
+        st.stop()
+
+    import json as _gdj
+    import uuid as _uuid
+
+    if "gd_mode" not in st.session_state:
+        st.session_state.gd_mode = "list"
+
+    title_col, btn1 = st.columns([7, 2])
+    with title_col:
+        st.title("Group dining")
+    with btn1:
+        if st.button("Upload new menu", type="primary", use_container_width=True):
+            st.session_state.gd_mode = "upload"
+            st.rerun()
+
+    if st.session_state.gd_mode != "list":
+        if st.button("← Back"):
+            st.session_state.gd_mode = "list"
+            st.rerun()
+        st.write("")
+
+    # ---- UPLOAD VIEW ----
+    if st.session_state.gd_mode == "upload":
+        st.subheader("Upload set menu PDF")
+        st.caption("Upload a new version to replace an existing menu for the same event. Old versions are discarded.")
+
+        uploaded = st.file_uploader("Set menu PDF", type=["pdf"])
+        if uploaded:
+            st.caption(f"📄 {uploaded.name}")
+            if st.button("Parse menu", type="primary"):
+                with st.spinner("Reading the menu PDF..."):
+                    try:
+                        parsed = db.parse_group_menu_pdf(uploaded.getvalue())
+                    except Exception as e:
+                        st.error(f"Couldn't read the menu: {e}")
+                        st.stop()
+                st.session_state.gd_parsed = parsed
+                st.session_state.gd_filename = uploaded.name
+                st.rerun()
+
+        if "gd_parsed" in st.session_state:
+            p = st.session_state.gd_parsed
+            st.success(f"Parsed: **{p['customer_name']}** | {p['event_date']} | {p['pax_count']} pax | ${p['base_price_per_pax']:.2f}/pax")
+            with st.expander("Preview extracted menu sections"):
+                for sec in p["sections"]:
+                    st.markdown(f"**{sec['name']}** ({sec['type']})")
+                    for it in sec["items"]:
+                        charge = f" +${it['surcharge']:.2f}" if it.get("surcharge", 0) > 0 else ""
+                        st.write(f"  • {it['name']}{charge}")
+
+            if st.button("Save and generate link", type="primary"):
+                conn = db.get_connection()
+                # Deactivate any existing menus for this customer + event date
+                conn.execute(
+                    "UPDATE group_menus SET is_active = 0 WHERE customer_name = ? AND event_date = ?",
+                    (p["customer_name"], p["event_date"])
+                )
+                # Get next version number
+                prev = conn.execute(
+                    "SELECT MAX(version) AS v FROM group_menus WHERE customer_name = ? AND event_date = ?",
+                    (p["customer_name"], p["event_date"])
+                ).fetchone()
+                version = (prev["v"] or 0) + 1
+                token = str(_uuid.uuid4()).replace("-", "")[:16]
+                conn.execute("""
+                    INSERT INTO group_menus
+                        (access_token, customer_name, event_date, pax_count,
+                         base_price_per_pax, version, menu_json, uploaded_by, uploaded_at, is_active)
+                    VALUES (?,?,?,?,?,?,?,?,?,1)
+                """, (
+                    token, p["customer_name"], p["event_date"],
+                    p["pax_count"], p["base_price_per_pax"],
+                    version, _gdj.dumps(p),
+                    current_user["name"], date.today().isoformat()
+                ))
+                conn.commit()
+                conn.close()
+                del st.session_state.gd_parsed
+                st.session_state.gd_new_token = token
+                st.session_state.gd_mode = "list"
+                st.rerun()
+
+    # ---- LIST VIEW ----
+    elif st.session_state.gd_mode == "list":
+        conn = db.get_connection()
+        menus = conn.execute(
+            "SELECT * FROM group_menus WHERE is_active = 1 ORDER BY event_date DESC"
+        ).fetchall()
+        conn.close()
+
+        if st.session_state.get("gd_new_token"):
+            app_url = "https://tpcafe-app.streamlit.app"
+            new_link = f"{app_url}/?menu={st.session_state.gd_new_token}"
+            st.success("Menu saved!")
+            st.info(f"**Share this link with your customer:**\n\n{new_link}")
+            st.code(new_link)
+            del st.session_state.gd_new_token
+
+        if not menus:
+            st.info("No group dining menus yet. Upload one above.")
+        else:
+            for m in menus:
+                sub = db.get_group_submission(m["id"])
+                with st.container(border=True):
+                    h1, h2, h3, h4 = st.columns([3, 2, 2, 2])
+                    h1.write(f"**{m['customer_name']}**")
+                    h2.write(f"📅 {m['event_date']}")
+                    h3.write(f"{m['pax_count']} pax · ${m['base_price_per_pax']:.2f}/pax")
+                    h4.write(f"v{m['version']}")
+
+                    app_url = "https://tpcafe-app.streamlit.app"
+                    link = f"{app_url}/?menu={m['access_token']}"
+                    st.code(link, language=None)
+
+                    if sub:
+                        sel = _gdj.loads(sub["selections_json"])
+                        st.write(f"✅ **Selections received** | Total: **${sub['total_amount']:.2f}** | Updated: {sub['updated_at'][:10]}")
+
+                        with st.expander("View selections"):
+                            per_pax = sel.get("per_pax", [])
+                            for i, pax_row in enumerate(per_pax, 1):
+                                st.write(f"**Guest {i}:** " + " | ".join(f"{k}: {v}" for k, v in pax_row.items()))
+                            addons = sel.get("addons", {})
+                            if addons:
+                                st.write("**Add-ons:** " + ", ".join(f"{k} ×{v}" for k, v in addons.items()))
+                            if sub["dietary_notes"]:
+                                st.write(f"**Dietary notes:** {sub['dietary_notes']}")
+
+                            bc1, bc2, bc3 = st.columns(3)
+                            bc1.metric("Base", f"${sub['total_base']:.2f}")
+                            bc2.metric("Surcharges", f"${sub['total_surcharges']:.2f}")
+                            bc3.metric("Total", f"${sub['total_amount']:.2f}")
+
+                        # Download as CSV
+                        import io as _io, csv as _csv
+                        csv_buf = _io.StringIO()
+                        writer = _csv.writer(csv_buf)
+                        writer.writerow(["Guest", "Section", "Choice"])
+                        for i, pax_row in enumerate(per_pax, 1):
+                            for sec, choice in pax_row.items():
+                                writer.writerow([f"Guest {i}", sec, choice])
+                        for addon_name, qty in sel.get("addons", {}).items():
+                            writer.writerow(["Add-on", addon_name, qty])
+                        writer.writerow([])
+                        writer.writerow(["Base total", sub["total_base"]])
+                        writer.writerow(["Surcharges", sub["total_surcharges"]])
+                        writer.writerow(["Grand total", sub["total_amount"]])
+                        st.download_button(
+                            "Download selections CSV",
+                            data=csv_buf.getvalue(),
+                            file_name=f"{m['customer_name'].replace(' ','_')}_{m['event_date']}_selections.csv",
+                            mime="text/csv",
+                            key=f"dl_{m['id']}"
+                        )
+
+                        # Xero billing
+                        st.write("")
+                        st.write("**Xero billing**")
+                        if sub["xero_invoice_id"]:
+                            st.success(f"Invoice already sent to Xero: `{sub['xero_invoice_id']}`")
+                        else:
+                            if st.button("Send invoice to Xero", key=f"xero_{m['id']}"):
+                                st.session_state[f"xero_confirm_{m['id']}"] = True
+                                st.rerun()
+
+                        if st.session_state.get(f"xero_confirm_{m['id']}"):
+                            st.warning(f"Create a Xero invoice for **{m['customer_name']}** for **${sub['total_amount']:.2f}**?")
+                            xc1, xc2 = st.columns(2)
+                            with xc1:
+                                if st.button("Confirm — send to Xero", type="primary", key=f"xero_go_{m['id']}"):
+                                    with st.spinner("Creating invoice in Xero..."):
+                                        try:
+                                            menu_data = _gdj.loads(m["menu_json"])
+                                            sel_data = _gdj.loads(sub["selections_json"])
+                                            line_items = [
+                                                {"description": f"Set menu base — {m['pax_count']} pax × ${m['base_price_per_pax']:.2f}",
+                                                 "quantity": m["pax_count"], "unitAmount": m["base_price_per_pax"],
+                                                 "accountCode": "200"}
+                                            ]
+                                            if sub["total_surcharges"] > 0:
+                                                line_items.append({
+                                                    "description": "Menu surcharges (premium selections)",
+                                                    "quantity": 1, "unitAmount": sub["total_surcharges"],
+                                                    "accountCode": "200"
+                                                })
+                                            import anthropic as _ac
+                                            xero_client = _ac.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+                                            xero_response = xero_client.messages.create(
+                                                model="claude-sonnet-4-6",
+                                                max_tokens=1000,
+                                                mcp_servers=[{"type": "url", "url": "https://mcp.xero.com/mcp", "name": "xero"}],
+                                                messages=[{"role": "user", "content":
+                                                    f"Create a draft invoice in Xero for contact '{m['customer_name']}' "
+                                                    f"with due date '{m['event_date']}' and these line items: {_gdj.dumps(line_items)}. "
+                                                    "If the contact doesn't exist, create it first. "
+                                                    "Return the invoice ID."
+                                                }]
+                                            )
+                                            invoice_id = next(
+                                                (b.text for b in xero_response.content if b.type == "text"), "created"
+                                            )
+                                            conn = db.get_connection()
+                                            conn.execute(
+                                                "UPDATE group_dining_submissions SET xero_invoice_id = ? WHERE id = ?",
+                                                (invoice_id, sub["id"])
+                                            )
+                                            conn.commit()
+                                            conn.close()
+                                            del st.session_state[f"xero_confirm_{m['id']}"]
+                                            st.success(f"Invoice created in Xero! ID: {invoice_id}")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Xero error: {e}")
+                            with xc2:
+                                if st.button("Cancel", key=f"xero_cancel_{m['id']}"):
+                                    del st.session_state[f"xero_confirm_{m['id']}"]
+                                    st.rerun()
+                    else:
+                        st.caption("⏳ No selections submitted yet.")
 
 
 # =========================================================

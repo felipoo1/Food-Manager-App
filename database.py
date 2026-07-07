@@ -356,6 +356,38 @@ def init_db():
     _ensure_column("ingredients", "current_stock_qty", "REAL")
     _ensure_column("ingredients", "min_stock_qty", "REAL")
 
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS group_menus (
+            id SERIAL PRIMARY KEY,
+            access_token TEXT UNIQUE NOT NULL,  -- UUID used in the shareable URL
+            customer_name TEXT,
+            event_date TEXT,
+            pax_count INTEGER,
+            base_price_per_pax REAL,
+            version INTEGER DEFAULT 1,
+            menu_json TEXT,  -- full structured menu as JSON (sections, items, surcharges)
+            uploaded_by TEXT,
+            uploaded_at TEXT,
+            is_active INTEGER DEFAULT 1
+        )
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS group_dining_submissions (
+            id SERIAL PRIMARY KEY,
+            menu_id INTEGER NOT NULL,
+            selections_json TEXT,   -- JSON: per-pax choices + add-ons
+            dietary_notes TEXT,
+            total_base REAL,
+            total_surcharges REAL,
+            total_amount REAL,
+            submitted_at TEXT,
+            updated_at TEXT,
+            xero_invoice_id TEXT,   -- populated once staff sends to Xero
+            FOREIGN KEY (menu_id) REFERENCES group_menus(id) ON DELETE CASCADE
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -812,6 +844,72 @@ def fetch_latest_pos_sales_email():
         return None, "No recent email with an .xls attachment was found in the last 20 messages."
     except Exception as e:
         return None, str(e)
+
+
+def parse_group_menu_pdf(file_bytes):
+    """
+    Uses Claude to extract structured menu data from a Group Dining Set Menu PDF.
+    Returns a dict with customer_name, event_date, pax_count, base_price_per_pax,
+    and sections (list of menu sections with items and surcharges).
+    """
+    import anthropic, base64, json
+    client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+    b64 = base64.b64encode(file_bytes).decode("utf-8")
+    response = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=2048,
+        extra_headers={"anthropic-beta": "pdfs-2024-09-25"},
+        system="You extract structured data from restaurant set menu PDFs. Respond with ONLY valid JSON.",
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": b64}},
+                {"type": "text", "text": (
+                    "Extract the set menu details. Return JSON exactly in this shape: "
+                    '{"customer_name":"","event_date":"","pax_count":0,"base_price_per_pax":0.0,'
+                    '"sections":['
+                    '{"name":"","type":"per_pax_choice|optional_addon|fixed_included",'
+                    '"required":true,'
+                    '"items":[{"name":"","description":"","surcharge":0.0}]}'
+                    ']}. '
+                    "type must be one of: "
+                    "'per_pax_choice' (guests pick ONE item each, e.g. Mains, Pasta), "
+                    "'optional_addon' (optional extras guests can add, e.g. Sides, Beverages), "
+                    "'fixed_included' (items automatically included, e.g. Starter, Dessert). "
+                    "surcharge is the extra charge on top of base price (0.0 if included in base). "
+                    "event_date should be formatted as YYYY-MM-DD."
+                )}
+            ]
+        }]
+    )
+    raw = response.content[0].text.strip().replace("```json","").replace("```","").strip()
+    return json.loads(raw)
+
+
+def get_group_menu_by_token(token, conn=None):
+    """Returns the active group menu for a given access token, or None."""
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM group_menus WHERE access_token = ? AND is_active = 1", (token,)
+    ).fetchone()
+    if owns_conn:
+        conn.close()
+    return row
+
+
+def get_group_submission(menu_id, conn=None):
+    """Returns the current submission for a menu, or None."""
+    owns_conn = conn is None
+    if owns_conn:
+        conn = get_connection()
+    row = conn.execute(
+        "SELECT * FROM group_dining_submissions WHERE menu_id = ?", (menu_id,)
+    ).fetchone()
+    if owns_conn:
+        conn.close()
+    return row
 
 
 def find_best_match(target_text, candidates):
