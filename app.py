@@ -151,25 +151,35 @@ if _menu_token:
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+    /* Larger everything for customer-facing form */
+    p, div, span, label { font-size: 16px !important; }
+    [data-testid="stWidgetLabel"] p { font-size: 16px !important; font-weight: 500 !important; }
+    [data-testid="stNumberInput"] input { font-size: 18px !important; text-align: center !important; }
+    [data-testid="stTextArea"] textarea { font-size: 16px !important; }
+    [data-testid="stBaseButton-primary"] { font-size: 17px !important; padding: 12px 28px !important; font-weight: 700 !important; }
+    [data-testid="stCaptionContainer"] p { font-size: 14px !important; }
+    .stExpander summary p { font-size: 16px !important; font-weight: 500 !important; }
+
     .gd-hero{background:#1E293B;border-radius:12px;padding:28px 28px 24px;margin-bottom:20px;position:relative;overflow:hidden}
     .gd-hero::after{content:'';position:absolute;right:-30px;top:-30px;width:180px;height:180px;border-radius:50%;background:rgba(242,100,25,0.12)}
-    .gd-hero-tag{background:#F26419;color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px;display:inline-block;margin-bottom:10px;letter-spacing:0.8px}
-    .gd-hero-name{font-size:24px;font-weight:700;color:#fff;margin-bottom:3px}
-    .gd-hero-sub{font-size:14px;color:#94A3B8}
-    .gd-hero-pills{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
-    .gd-pill{background:rgba(255,255,255,0.1);color:#CBD5E1;font-size:12px;padding:5px 12px;border-radius:20px}
-    .gd-section-head{display:flex;align-items:center;gap:10px;margin:20px 0 10px}
-    .gd-section-title{font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.8px}
-    .gd-badge-green{background:#F0FDF4;color:#15803D;font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600}
-    .gd-badge-orange{background:#FFF7F0;color:#C2410C;font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600}
-    .gd-included{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px}
-    .gd-chip{background:#fff;border:1px solid #E2E8F0;border-radius:8px;padding:10px 16px;font-size:13px;color:#475569;display:flex;align-items:center;gap:6px}
-    .gd-chip::before{content:'✓';color:#22C55E;font-weight:700;font-size:14px}
-    .gd-total{background:#1E293B;border-radius:10px;padding:16px 20px;display:flex;justify-content:space-between;align-items:center;margin-top:16px}
-    .gd-total-items{display:flex;gap:20px}
-    .gd-total-label{font-size:11px;color:#64748B;margin-bottom:2px}
-    .gd-total-value{font-size:16px;font-weight:700;color:#F1F5F9}
-    .gd-total-grand{font-size:20px;font-weight:700;color:#F26419}
+    .gd-hero-tag{background:#F26419;color:#fff;font-size:13px;font-weight:700;padding:4px 12px;border-radius:4px;display:inline-block;margin-bottom:12px;letter-spacing:0.8px}
+    .gd-hero-name{font-size:30px;font-weight:700;color:#fff;margin-bottom:5px}
+    .gd-hero-sub{font-size:17px;color:#94A3B8}
+    .gd-hero-pills{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+    .gd-pill{background:rgba(255,255,255,0.1);color:#CBD5E1;font-size:14px;padding:7px 14px;border-radius:20px}
+    .gd-section-head{display:flex;align-items:center;gap:10px;margin:24px 0 12px}
+    .gd-section-title{font-size:14px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:0.8px}
+    .gd-badge-green{background:#F0FDF4;color:#15803D;font-size:13px;padding:3px 10px;border-radius:4px;font-weight:600}
+    .gd-badge-orange{background:#FFF7F0;color:#C2410C;font-size:13px;padding:3px 10px;border-radius:4px;font-weight:600}
+    .gd-included{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px}
+    .gd-chip{background:#fff;border:1px solid #E2E8F0;border-radius:8px;padding:12px 18px;font-size:16px;color:#475569;display:flex;align-items:center;gap:8px}
+    .gd-chip::before{content:'✓';color:#22C55E;font-weight:700;font-size:17px}
+    .gd-total{background:#1E293B;border-radius:10px;padding:20px 24px;display:flex;justify-content:space-between;align-items:center;margin-top:16px}
+    .gd-total-items{display:flex;gap:24px}
+    .gd-total-label{font-size:13px;color:#64748B;margin-bottom:4px}
+    .gd-total-value{font-size:20px;font-weight:700;color:#F1F5F9}
+    .gd-total-grand{font-size:26px;font-weight:700;color:#F26419}
     </style>
     """, unsafe_allow_html=True)
 
