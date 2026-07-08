@@ -390,24 +390,15 @@ def init_db():
         )
     """)
 
-    # Safe migration: add UNIQUE constraint if table already exists without it.
-    # In Postgres we can't ALTER TABLE ADD CONSTRAINT if it already exists,
-    # so we check the information_schema first.
-    cur.execute("""
-        SELECT COUNT(*) FROM information_schema.table_constraints
-        WHERE table_name = 'group_dining_submissions'
-        AND constraint_type = 'UNIQUE'
-        AND constraint_name = 'group_dining_submissions_menu_id_key'
-    """)
-    row = cur.fetchone()
-    if row and (row[0] == 0):
-        try:
-            cur.execute("""
-                ALTER TABLE group_dining_submissions
-                ADD CONSTRAINT group_dining_submissions_menu_id_key UNIQUE (menu_id)
-            """)
-        except Exception:
-            pass  # already exists or not needed
+    # Add UNIQUE constraint to group_dining_submissions.menu_id if not already there.
+    # The try/except handles the case where the constraint already exists gracefully.
+    try:
+        cur.execute("""
+            ALTER TABLE group_dining_submissions
+            ADD CONSTRAINT group_dining_submissions_menu_id_key UNIQUE (menu_id)
+        """)
+    except Exception:
+        pass  # constraint already exists — safe to ignore
 
     conn.commit()
     conn.close()
