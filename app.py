@@ -47,7 +47,7 @@ st.markdown(f"""
 # process never fully restarts -- this is what prevents the exact bug where
 # new tables silently don't get created because a stale cached "already set
 # up" result from before the change was reused.
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 @st.cache_resource
@@ -187,7 +187,7 @@ if _menu_token:
     <div class="gd-hero">
       <div class="gd-hero-tag">GROUP DINING — SET MENU</div>
       <div class="gd-hero-name">{menu['customer_name']} · {pax_count} pax</div>
-      <div class="gd-hero-sub">{event_date} &nbsp;·&nbsp; ${menu['base_price_per_pax']:.2f} nett per pax</div>
+      <div class="gd-hero-sub">{event_date}{f" &nbsp;·&nbsp; {menu['reservation_time']}" if menu.get('reservation_time') else ""} &nbsp;·&nbsp; ${menu['base_price_per_pax']:.2f} nett per pax</div>
       <div class="gd-hero-pills">
         <div class="gd-pill">📅 Selections due by {cutoff.strftime('%d %b %Y')}</div>
         <div class="gd-pill">✓ Base price confirmed</div>
@@ -224,6 +224,16 @@ if _menu_token:
                     if qty > 0:
                         st.write(f"**{item_name}** × {qty}")
             st.metric("Total amount", f"${sub['total_amount']:.2f}")
+            pdf_bytes = db.generate_group_dining_pdf(
+                menu, sub["selections_json"], sub["dietary_notes"],
+                sub["total_base"], sub["total_surcharges"], sub["total_amount"]
+            )
+            st.download_button(
+                "📄 Download your order summary (PDF)",
+                data=pdf_bytes,
+                file_name=f"order_summary_{event_date}.pdf",
+                mime="application/pdf",
+            )
         st.stop()
 
     # Load existing submission
@@ -303,6 +313,18 @@ if _menu_token:
     )
 
     btn_label = "Update selections" if existing_sub else "Submit selections"
+    if existing_sub:
+        pdf_bytes_preview = db.generate_group_dining_pdf(
+            menu, existing_sub["selections_json"], existing_sub["dietary_notes"] or "",
+            existing_sub["total_base"] or 0, existing_sub["total_surcharges"] or 0,
+            existing_sub["total_amount"] or 0
+        )
+        st.download_button(
+            "📄 Download current order summary (PDF)",
+            data=pdf_bytes_preview,
+            file_name=f"order_summary_{event_date}.pdf",
+            mime="application/pdf",
+        )
     if st.button(btn_label, type="primary", width="stretch"):
         final_sel = _json.dumps({"sections": section_selections})
         conn = db.get_connection()
@@ -330,6 +352,17 @@ if _menu_token:
         conn.commit()
         conn.close()
         st.success("✅ Selections saved! You can update these until 3 days before the event.")
+        # Generate a PDF summary for the customer to keep
+        pdf_bytes = db.generate_group_dining_pdf(
+            menu, final_sel, dietary,
+            base_total, surcharge_total, grand_total
+        )
+        st.download_button(
+            "📄 Download your order summary (PDF)",
+            data=pdf_bytes,
+            file_name=f"order_summary_{menu['event_date']}.pdf",
+            mime="application/pdf",
+        )
         st.balloons()
     st.stop()
 
@@ -499,12 +532,11 @@ st.sidebar.markdown("##### ☕ Cafe Manager")
 st.sidebar.caption(f"Logged in as **{current_user['name']}** ({current_user['role']})")
 st.sidebar.write("")
 
-nav_options = ["Tasks", "Stock Take", "Master Stock List", "Recipes", "Suppliers", "Orders"]
+nav_options = ["Tasks", "Stock Take", "Master Stock List", "Recipes", "Suppliers", "Orders", "Group Dining"]
 if is_owner:
     nav_options.append("Task History")
     nav_options.append("Invoices")
     nav_options.append("Staff")
-    nav_options.append("Group Dining")
     nav_options.append("Sales Sync")
     nav_options.append("Data Export")
 
@@ -2410,13 +2442,9 @@ elif page == "Orders":
 
 
 # =========================================================
-# PAGE: GROUP DINING  (owner only)
+# PAGE: GROUP DINING  (all staff can view; owners can upload and send to Xero)
 # =========================================================
 elif page == "Group Dining":
-    if not is_owner:
-        st.error("This page is restricted to the Owner account.")
-        st.stop()
-
     import json as _gdj
     import uuid as _uuid
 
@@ -2427,9 +2455,10 @@ elif page == "Group Dining":
     with title_col:
         st.title("Group dining")
     with btn1:
-        if st.button("Upload new menu", type="primary", width="stretch"):
-            st.session_state.gd_mode = "upload"
-            st.rerun()
+        if is_owner:
+            if st.button("Upload new menu", type="primary", width="stretch"):
+                st.session_state.gd_mode = "upload"
+                st.rerun()
 
     if st.session_state.gd_mode != "list":
         if st.button("← Back"):
@@ -2437,8 +2466,12 @@ elif page == "Group Dining":
             st.rerun()
         st.write("")
 
-    # ---- UPLOAD VIEW ----
-    if st.session_state.gd_mode == "upload":
+    # ---- UPLOAD VIEW (owner only) ----
+    if st.session_state.gd_mode == "upload" and not is_owner:
+        st.warning("Only the Owner can upload menus.")
+        st.session_state.gd_mode = "list"
+        st.rerun()
+    elif st.session_state.gd_mode == "upload":
         st.subheader("Upload set menu PDF")
         st.caption("Upload a new version to replace an existing menu for the same event. Old versions are discarded.")
 
@@ -2482,11 +2515,12 @@ elif page == "Group Dining":
                 token = str(_uuid.uuid4()).replace("-", "")[:16]
                 conn.execute("""
                     INSERT INTO group_menus
-                        (access_token, customer_name, event_date, pax_count,
+                        (access_token, customer_name, event_date, reservation_time, pax_count,
                          base_price_per_pax, version, menu_json, uploaded_by, uploaded_at, is_active)
-                    VALUES (?,?,?,?,?,?,?,?,?,1)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,1)
                 """, (
                     token, p["customer_name"], p["event_date"],
+                    p.get("reservation_time", ""),
                     p["pax_count"], p["base_price_per_pax"],
                     version, _gdj.dumps(p),
                     current_user["name"], date.today().isoformat()
@@ -2574,9 +2608,23 @@ elif page == "Group Dining":
                             key=f"dl_{m['id']}"
                         )
 
-                        # Xero billing
-                        st.write("")
-                        st.write("**Xero billing**")
+                        # PDF download for staff
+                        pdf_bytes = db.generate_group_dining_pdf(
+                            m, m["selections_json"], m["dietary_notes"],
+                            m["total_base"] or 0, m["total_surcharges"] or 0, m["total_amount"] or 0
+                        )
+                        st.download_button(
+                            "Download order summary PDF",
+                            data=pdf_bytes,
+                            file_name=f"{m['customer_name'].replace(' ','_')}_{m['event_date']}_order.pdf",
+                            mime="application/pdf",
+                            key=f"pdf_{m['id']}"
+                        )
+
+                        # Xero billing — owner only
+                        if is_owner:
+                            st.write("")
+                            st.write("**Xero billing**")
                         if m["xero_invoice_id"]:
                             st.success(f"Invoice already sent to Xero: `{m['xero_invoice_id']}`")
                         else:

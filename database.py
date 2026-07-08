@@ -231,6 +231,7 @@ def init_db():
     """)
 
     _ensure_column("orders", "supplier_note", "TEXT")
+    _ensure_column("group_menus", "reservation_time", "TEXT")
     _ensure_column("orders", "internal_note", "TEXT")
     _ensure_column("orders", "delivery_date", "TEXT")
 
@@ -362,6 +363,7 @@ def init_db():
             access_token TEXT UNIQUE NOT NULL,  -- UUID used in the shareable URL
             customer_name TEXT,
             event_date TEXT,
+            reservation_time TEXT,     -- e.g. "12:30 PM", from the PDF
             pax_count INTEGER,
             base_price_per_pax REAL,
             version INTEGER DEFAULT 1,
@@ -885,7 +887,7 @@ def parse_group_menu_pdf(file_bytes):
                 {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": b64}},
                 {"type": "text", "text": (
                     "Extract the set menu details. Return JSON exactly in this shape: "
-                    '{"customer_name":"","event_date":"","pax_count":0,"base_price_per_pax":0.0,'
+                    '{"customer_name":"","event_date":"","reservation_time":"","pax_count":0,"base_price_per_pax":0.0,'
                     '"sections":['
                     '{"name":"","type":"per_pax_choice|optional_addon|fixed_included",'
                     '"required":true,'
@@ -896,7 +898,8 @@ def parse_group_menu_pdf(file_bytes):
                     "'optional_addon' (optional extras guests can add, e.g. Sides, Beverages), "
                     "'fixed_included' (items automatically included, e.g. Starter, Dessert). "
                     "surcharge is the extra charge on top of base price (0.0 if included in base). "
-                    "event_date should be formatted as YYYY-MM-DD."
+                    "event_date should be formatted as YYYY-MM-DD. "
+                    "reservation_time is the booking time (e.g. '12:30 PM') — leave empty string if not shown."
                 )}
             ]
         }]
@@ -967,6 +970,152 @@ def get_all_active_group_menus(conn=None):
     if owns_conn:
         conn.close()
     return rows
+
+
+def generate_group_dining_pdf(menu_row, selections_json, dietary_notes,
+                               total_base, total_surcharges, total_amount):
+    """
+    Generates a clean, printable order summary PDF for a group dining booking.
+    Returns the PDF as bytes, ready for st.download_button or to send to the customer.
+    Uses reportlab's Platypus flow engine so the layout expands correctly
+    regardless of how many menu items are selected.
+    """
+    import io, json as _json
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    )
+
+    # ---- Brand colours ----
+    ORANGE  = colors.HexColor("#F26419")
+    DARK    = colors.HexColor("#1E293B")
+    MUTED   = colors.HexColor("#64748B")
+    LIGHT   = colors.HexColor("#F8FAFC")
+    BORDER  = colors.HexColor("#E2E8F0")
+    GREEN   = colors.HexColor("#16A34A")
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=20*mm, rightMargin=20*mm,
+        topMargin=18*mm, bottomMargin=18*mm
+    )
+
+    styles = getSampleStyleSheet()
+    def style(name, **kwargs):
+        return ParagraphStyle(name, parent=styles["Normal"], **kwargs)
+
+    heading1  = style("h1", fontSize=22, textColor=DARK,    fontName="Helvetica-Bold", spaceAfter=4)
+    heading2  = style("h2", fontSize=13, textColor=DARK,    fontName="Helvetica-Bold", spaceBefore=14, spaceAfter=4)
+    body_dark = style("bd", fontSize=11, textColor=DARK,    fontName="Helvetica")
+    body_muted= style("bm", fontSize=10, textColor=MUTED,   fontName="Helvetica")
+    small     = style("sm", fontSize=9,  textColor=MUTED,   fontName="Helvetica")
+    total_lbl = style("tl", fontSize=10, textColor=MUTED,   fontName="Helvetica")
+    total_val = style("tv", fontSize=13, textColor=DARK,    fontName="Helvetica-Bold")
+    grand_val = style("gv", fontSize=16, textColor=ORANGE,  fontName="Helvetica-Bold")
+
+    story = []
+
+    # ---- Header ----
+    header_data = [[
+        Paragraph("<b>The Tea Party Cafe</b>", style("hdr", fontSize=14, textColor=ORANGE, fontName="Helvetica-Bold")),
+        Paragraph("Group Dining — Order Summary", style("sub", fontSize=10, textColor=MUTED, fontName="Helvetica", alignment=2))
+    ]]
+    header_tbl = Table(header_data, colWidths=["60%", "40%"])
+    header_tbl.setStyle(TableStyle([
+        ("VALIGN",       (0,0), (-1,-1), "MIDDLE"),
+        ("BOTTOMPADDING",(0,0), (-1,-1), 8),
+    ]))
+    story.append(header_tbl)
+    story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=10))
+
+    # ---- Booking details ----
+    story.append(Paragraph(menu_row["customer_name"], heading1))
+    details = [
+        ["Event date",  menu_row["event_date"]],
+        ["Time",        menu_row.get("reservation_time", "") or "—"],
+        ["Party size",  f"{menu_row['pax_count']} pax"],
+        ["Base price",  f"${menu_row['base_price_per_pax']:.2f} / pax"],
+        ["Menu version", f"v{menu_row['version']}"],
+    ]
+    det_tbl = Table(details, colWidths=[40*mm, None])
+    det_tbl.setStyle(TableStyle([
+        ("FONTNAME",    (0,0), (0,-1), "Helvetica-Bold"),
+        ("FONTSIZE",    (0,0), (-1,-1), 10),
+        ("TEXTCOLOR",   (0,0), (0,-1), MUTED),
+        ("TEXTCOLOR",   (1,0), (1,-1), DARK),
+        ("TOPPADDING",  (0,0), (-1,-1), 3),
+        ("BOTTOMPADDING",(0,0),(-1,-1), 3),
+    ]))
+    story.append(det_tbl)
+    story.append(Spacer(1, 6))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER, spaceAfter=6))
+
+    # ---- Selections ----
+    sel = _json.loads(selections_json)
+    for section_name, items in sel.get("sections", {}).items():
+        chosen = [(name, qty) for name, qty in items.items() if qty and qty > 0]
+        if not chosen:
+            continue
+        story.append(Paragraph(section_name.upper(), style(
+            "sec", fontSize=9, textColor=ORANGE, fontName="Helvetica-Bold",
+            spaceBefore=10, spaceAfter=4
+        )))
+        rows = [["Item", "Qty"]]
+        for name, qty in chosen:
+            rows.append([Paragraph(name, body_dark), Paragraph(str(qty), body_dark)])
+        tbl = Table(rows, colWidths=[None, 18*mm])
+        tbl.setStyle(TableStyle([
+            ("BACKGROUND",   (0,0), (-1,0), LIGHT),
+            ("FONTNAME",     (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE",     (0,0), (-1,-1), 10),
+            ("TEXTCOLOR",    (0,0), (-1,0), MUTED),
+            ("GRID",         (0,0), (-1,-1), 0.5, BORDER),
+            ("TOPPADDING",   (0,0), (-1,-1), 5),
+            ("BOTTOMPADDING",(0,0), (-1,-1), 5),
+            ("ROWBACKGROUNDS",(0,1),(-1,-1), [colors.white, LIGHT]),
+            ("ALIGN",        (1,0), (1,-1), "CENTER"),
+        ]))
+        story.append(tbl)
+
+    # ---- Dietary notes ----
+    if dietary_notes and dietary_notes.strip():
+        story.append(Spacer(1, 8))
+        story.append(Paragraph("Dietary notes / special requests", heading2))
+        story.append(Paragraph(dietary_notes, body_dark))
+
+    # ---- Totals ----
+    story.append(Spacer(1, 10))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER, spaceAfter=8))
+    total_rows = [
+        [Paragraph("Base amount", total_lbl), Paragraph(f"${total_base:.2f}", total_val)],
+        [Paragraph("Surcharges",  total_lbl), Paragraph(f"${total_surcharges:.2f}", total_val)],
+        [Paragraph("TOTAL",       style("gt", fontSize=12, textColor=DARK, fontName="Helvetica-Bold")),
+         Paragraph(f"${total_amount:.2f}", grand_val)],
+    ]
+    tot_tbl = Table(total_rows, colWidths=[None, 36*mm])
+    tot_tbl.setStyle(TableStyle([
+        ("ALIGN",        (1,0), (1,-1), "RIGHT"),
+        ("TOPPADDING",   (0,0), (-1,-1), 4),
+        ("BOTTOMPADDING",(0,0), (-1,-1), 4),
+        ("LINEABOVE",    (0,2), (-1,2), 1, DARK),
+    ]))
+    story.append(tot_tbl)
+
+    # ---- Footer ----
+    story.append(Spacer(1, 14))
+    story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER, spaceAfter=4))
+    story.append(Paragraph(
+        f"Generated by Cafe Manager · The Tea Party Cafe · {menu_row['event_date']}",
+        style("ft", fontSize=8, textColor=MUTED, fontName="Helvetica", alignment=1)
+    ))
+
+    doc.build(story)
+    buf.seek(0)
+    return buf.getvalue()
 
 
 def find_best_match(target_text, candidates):
