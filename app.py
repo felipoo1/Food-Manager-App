@@ -13,7 +13,26 @@ import database as db
 import base64
 from app_icon import ICON_BASE64
 
-st.set_page_config(page_title="Cafe Manager", layout="wide", page_icon="☕")
+_is_customer_form = bool(st.query_params.get("menu", ""))
+
+st.set_page_config(
+    page_title="Menu Selection — The Tea Party Cafe" if _is_customer_form else "Cafe Manager",
+    layout="wide",
+    page_icon="🍽️" if _is_customer_form else "☕"
+)
+
+if _is_customer_form:
+    # Inject Open Graph meta tags so when the customer shares the link on
+    # WhatsApp / iMessage / social media, a clean branded preview appears
+    # instead of a screenshot of the app's code.
+    st.markdown("""
+    <meta property="og:title"       content="Menu Selection — The Tea Party Cafe">
+    <meta property="og:description" content="Select your menu choices for your upcoming event. Tap to open your personalised order form.">
+    <meta property="og:type"        content="website">
+    <meta name="twitter:card"       content="summary">
+    <meta name="twitter:title"      content="Menu Selection — The Tea Party Cafe">
+    <meta name="twitter:description" content="Select your menu choices for your upcoming event.">
+    """, unsafe_allow_html=True)
 
 # ---------- "Add to Home Screen" icon (iOS/Android) ----------
 # Streamlit doesn't officially expose the page's <head>, so this uses a
