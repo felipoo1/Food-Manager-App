@@ -2978,171 +2978,197 @@ elif page == "Import Costing Sheet":
         st.stop()
 
     st.title("Import costing sheet")
-    st.caption(
-        "Upload your Excel costing sheet. The app will read every recipe and match "
-        "each ingredient to your Master Stock List. Review the matches, fix any that "
-        "are wrong, then click Import — nothing is written until you confirm."
-    )
 
-    if "import_parsed" not in st.session_state:
-        st.session_state.import_parsed = None
+    import json as _ij
 
-    uploaded = st.file_uploader("Costing sheet Excel file", type=["xlsx", "xls"])
-    if uploaded and st.button("Read file", type="primary"):
-        with st.spinner("Parsing the costing sheet..."):
-            try:
-                parsed = db.parse_costing_sheet(uploaded.getvalue())
-                st.session_state.import_parsed = parsed
-                st.rerun()
-            except Exception as e:
-                st.error(f"Couldn't read the file: {e}")
+    # ---- STEP 1: Upload & parse ----
+    if "cs_recipes" not in st.session_state:
 
-    if st.session_state.import_parsed:
-        parsed = st.session_state.import_parsed
+        st.caption("Upload your Excel costing sheet. The app reads every recipe and ingredient directly — you can edit everything before saving.")
 
-        # Load existing ingredients and prep recipes for matching
+        uploaded = st.file_uploader("Costing sheet Excel file", type=["xlsx", "xls"])
+        if uploaded and st.button("Read file", type="primary"):
+            with st.spinner("Reading the costing sheet..."):
+                try:
+                    parsed = db.parse_costing_sheet(uploaded.getvalue())
+
+                    # Load ingredients + preps for auto-matching
+                    conn = db.get_connection()
+                    ing_rows = conn.execute("SELECT id, name, base_unit FROM ingredients ORDER BY name").fetchall()
+                    prep_rows = conn.execute("SELECT id, name FROM recipes WHERE type='Prep' ORDER BY name").fetchall()
+                    conn.close()
+
+                    combined_pool = [r["name"] for r in ing_rows] + [r["name"] for r in prep_rows]
+                    ing_by_name = {r["name"]: r for r in ing_rows}
+                    prep_by_name = {r["name"]: r for r in prep_rows}
+
+                    # Auto-match every ingredient to the combined pool
+                    for recipe in parsed:
+                        for ing in recipe["ingredients"]:
+                            match_name, score = db.find_best_match(ing["name"], combined_pool)
+                            ing["matched_name"] = match_name if match_name else ""
+                            ing["match_score"] = round(score, 2)
+                            ing["skip"] = False
+
+                    st.session_state.cs_recipes = parsed
+                    st.session_state.cs_ing_by_name = {r["name"]: dict(r) for r in ing_rows}
+                    st.session_state.cs_prep_by_name = {r["name"]: dict(r) for r in prep_rows}
+                    st.session_state.cs_combined_pool = combined_pool
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Couldn't read the file: {e}")
+
+    # ---- STEP 2: Edit & import ----
+    else:
+        parsed = st.session_state.cs_recipes
+        ing_by_name = st.session_state.cs_ing_by_name
+        prep_by_name = st.session_state.cs_prep_by_name
+        combined_pool = st.session_state.cs_combined_pool
+
         conn = db.get_connection()
-        ing_rows = conn.execute("SELECT id, name, base_unit FROM ingredients ORDER BY name").fetchall()
-        prep_rows = conn.execute("SELECT id, name FROM recipes WHERE type='Prep' ORDER BY name").fetchall()
-        cat_rows = conn.execute("SELECT id, name, type FROM recipe_categories ORDER BY name").fetchall()
+        cat_rows = conn.execute("SELECT id, name FROM recipe_categories WHERE type='Dish' ORDER BY name").fetchall()
         conn.close()
 
-        ing_names = [r["name"] for r in ing_rows]
-        ing_by_name = {r["name"]: r for r in ing_rows}
-        prep_names = [r["name"] for r in prep_rows]
-        prep_by_name = {r["name"]: r for r in prep_rows}
-        # Combined pool: ingredients + prep recipes (for items like "Pasta" which is a Prep)
-        combined_pool = ing_names + prep_names
-        dish_categories = [r for r in cat_rows if r["type"] == "Dish"]
-
-        st.write(f"**{len(parsed)} recipes found.** Review the ingredient matches below.")
-        st.caption(
-            "🟢 High confidence (≥80%) — pre-selected. "
-            "🟡 Low confidence (<80%) — check these. "
-            "Red means no match found."
-        )
-
-        # Pick a default Dish category for all imported recipes
-        if dish_categories:
-            cat_options = {c["name"]: c["id"] for c in dish_categories}
-            default_cat = st.selectbox(
-                "Import all recipes into this category",
-                list(cat_options.keys()),
-                key="import_category"
-            )
-            default_cat_id = cat_options[default_cat]
-        else:
-            st.warning("No Dish categories exist yet — please add one in Recipes first.")
+        if not cat_rows:
+            st.warning("No Dish categories yet — add one in Recipes first.")
             st.stop()
 
+        cat_options = {c["name"]: c["id"] for c in cat_rows}
+        default_cat = st.selectbox("Import all recipes into this category", list(cat_options.keys()), key="cs_cat")
+        default_cat_id = cat_options[default_cat]
+
+        st.caption(f"**{len(parsed)} recipes** ready to import. Edit any details below, then click Import All.")
         st.write("")
 
-        # Build the review UI — one expander per recipe
         for r_idx, recipe in enumerate(parsed):
-            ing_count = len(recipe["ingredients"])
-            with st.expander(
-                f"**{recipe['name']}** — {ing_count} ingredient(s)"
-                + (f" · sell ${recipe['sell_px']:.2f}" if recipe["sell_px"] else ""),
-                expanded=(ing_count == 0)
-            ):
-                if ing_count == 0:
-                    st.warning("No ingredients found for this recipe in the sheet. It will be imported as an empty recipe for you to fill in manually.")
-                    st.checkbox("Skip this recipe", value=False, key=f"skip_{r_idx}")
-                    continue
+            skip_key = f"cs_skip_{r_idx}"
+            with st.container(border=True):
+                h1, h2, h3, h4 = st.columns([3, 2, 2, 1])
+                with h1:
+                    new_name = st.text_input("Recipe name", value=recipe["name"], key=f"cs_name_{r_idx}", label_visibility="collapsed")
+                with h2:
+                    new_sell = st.number_input(
+                        "Selling price ($)", min_value=0.0, step=0.50,
+                        value=float(recipe["sell_px"] or 0),
+                        key=f"cs_sell_{r_idx}", label_visibility="collapsed"
+                    )
+                with h3:
+                    st.caption(f"{len(recipe['ingredients'])} ingredient(s) from sheet")
+                with h4:
+                    skip = st.checkbox("Skip", value=st.session_state.get(skip_key, False), key=skip_key)
 
-                st.checkbox("Skip this recipe", value=False, key=f"skip_{r_idx}")
-                st.caption("For each ingredient, confirm or correct the match to your Master Stock List.")
+                if not skip:
+                    # Header row
+                    hc1, hc2, hc3, hc4, hc5 = st.columns([3, 2, 2, 2, 1])
+                    hc1.caption("Sheet ingredient")
+                    hc2.caption("Qty")
+                    hc3.caption("Unit")
+                    hc4.caption("Match to (your stock list)")
+                    hc5.caption("Remove")
 
-                for i_idx, ing in enumerate(recipe["ingredients"]):
-                    match_name, score = db.find_best_match(ing["name"], combined_pool)
-                    col1, col2, col3 = st.columns([2, 3, 1])
-                    with col1:
-                        st.write(f"**{ing['name']}**")
-                        st.caption(f"{ing['qty']:g} {ing['unit']}")
-                    with col2:
-                        confidence = "🟢" if score >= 0.8 else ("🟡" if score >= 0.5 else "🔴")
-                        match_hint = f"{confidence} {match_name} ({score:.0%})" if match_name else "🔴 No match found"
-                        override_options = ["-- skip this ingredient --"] + combined_pool
-                        default_idx = 0
-                        if match_name and match_name in combined_pool:
-                            default_idx = combined_pool.index(match_name) + 1
-                        st.selectbox(
-                            f"Match for {ing['name']}",
-                            override_options,
-                            index=default_idx,
-                            key=f"match_{r_idx}_{i_idx}",
-                            label_visibility="collapsed",
-                            help=f"Auto-matched: {match_hint}"
-                        )
-                    with col3:
-                        st.caption(match_hint)
+                    for i_idx, ing in enumerate(recipe["ingredients"]):
+                        if ing.get("skip"):
+                            continue
+                        ic1, ic2, ic3, ic4, ic5 = st.columns([3, 2, 2, 2, 1])
+                        with ic1:
+                            score = ing.get("match_score", 0)
+                            conf = "🟢" if score >= 0.8 else ("🟡" if score >= 0.5 else "🔴")
+                            st.write(f"{conf} **{ing['name']}**")
+                        with ic2:
+                            ing["qty"] = st.number_input(
+                                "qty", value=float(ing["qty"]), min_value=0.0, step=1.0,
+                                key=f"cs_qty_{r_idx}_{i_idx}", label_visibility="collapsed"
+                            )
+                        with ic3:
+                            unit_opts = ["g", "ml", "each"]
+                            cur_unit = ing.get("unit", "g")
+                            if cur_unit not in unit_opts:
+                                cur_unit = "g"
+                            ing["unit"] = st.selectbox(
+                                "unit", unit_opts, index=unit_opts.index(cur_unit),
+                                key=f"cs_unit_{r_idx}_{i_idx}", label_visibility="collapsed"
+                            )
+                        with ic4:
+                            opts = ["-- skip --"] + combined_pool
+                            default_idx = 0
+                            matched = ing.get("matched_name", "")
+                            if matched and matched in combined_pool:
+                                default_idx = combined_pool.index(matched) + 1
+                            ing["matched_name"] = st.selectbox(
+                                "match", opts, index=default_idx,
+                                key=f"cs_match_{r_idx}_{i_idx}", label_visibility="collapsed"
+                            )
+                        with ic5:
+                            if st.button("✕", key=f"cs_del_{r_idx}_{i_idx}", help="Remove this line"):
+                                ing["skip"] = True
+                                st.rerun()
 
         st.write("")
-        st.divider()
-        col_a, col_b = st.columns(2)
-        with col_a:
-            if st.button("Import confirmed recipes", type="primary", width="stretch"):
+        bc1, bc2 = st.columns(2)
+        with bc1:
+            if st.button("Import all recipes", type="primary", width="stretch"):
                 conn = db.get_connection()
                 imported, skipped, errors = 0, 0, []
 
                 for r_idx, recipe in enumerate(parsed):
-                    if st.session_state.get(f"skip_{r_idx}"):
+                    if st.session_state.get(f"cs_skip_{r_idx}"):
                         skipped += 1
                         continue
-
                     try:
-                        # Create the recipe
+                        name = st.session_state.get(f"cs_name_{r_idx}", recipe["name"])
+                        sell = st.session_state.get(f"cs_sell_{r_idx}", recipe["sell_px"] or 0)
+
                         conn.execute(
                             "INSERT INTO recipes (name, type, category_id, selling_price) VALUES (?, 'Dish', ?, ?)",
-                            (recipe["name"], default_cat_id, recipe["sell_px"])
+                            (name, default_cat_id, sell or None)
                         )
-                        new_recipe_id = conn.execute(
+                        new_id = conn.execute(
                             "SELECT id FROM recipes WHERE name=? AND category_id=? ORDER BY id DESC LIMIT 1",
-                            (recipe["name"], default_cat_id)
+                            (name, default_cat_id)
                         ).fetchone()["id"]
 
-                        # Add each ingredient line
                         for i_idx, ing in enumerate(recipe["ingredients"]):
-                            chosen = st.session_state.get(f"match_{r_idx}_{i_idx}", "-- skip this ingredient --")
-                            if chosen == "-- skip this ingredient --" or not chosen:
+                            if ing.get("skip"):
                                 continue
-
+                            chosen = st.session_state.get(f"cs_match_{r_idx}_{i_idx}", ing.get("matched_name", ""))
+                            qty = st.session_state.get(f"cs_qty_{r_idx}_{i_idx}", ing["qty"])
+                            if not chosen or chosen == "-- skip --":
+                                continue
                             if chosen in prep_by_name:
-                                # It's a Prep sub-recipe
-                                sub = prep_by_name[chosen]
                                 conn.execute(
-                                    "INSERT INTO recipe_lines (parent_recipe_id, sub_recipe_id, quantity) VALUES (?, ?, ?)",
-                                    (new_recipe_id, sub["id"], ing["qty"])
+                                    "INSERT INTO recipe_lines (parent_recipe_id, sub_recipe_id, quantity) VALUES (?,?,?)",
+                                    (new_id, prep_by_name[chosen]["id"], qty)
                                 )
                             elif chosen in ing_by_name:
-                                # It's a raw ingredient
-                                raw = ing_by_name[chosen]
                                 conn.execute(
-                                    "INSERT INTO recipe_lines (parent_recipe_id, ingredient_id, quantity) VALUES (?, ?, ?)",
-                                    (new_recipe_id, raw["id"], ing["qty"])
+                                    "INSERT INTO recipe_lines (parent_recipe_id, ingredient_id, quantity) VALUES (?,?,?)",
+                                    (new_id, ing_by_name[chosen]["id"], qty)
                                 )
-
                         conn.commit()
                         imported += 1
                     except Exception as e:
                         errors.append(f"{recipe['name']}: {e}")
 
                 conn.close()
-                del st.session_state.import_parsed
+                del st.session_state.cs_recipes
+                del st.session_state.cs_ing_by_name
+                del st.session_state.cs_prep_by_name
+                del st.session_state.cs_combined_pool
 
                 if imported:
-                    st.success(f"✅ Imported {imported} recipe(s).")
+                    st.success(f"✅ Imported {imported} recipe(s) into {default_cat}.")
+                    st.balloons()
                 if skipped:
-                    st.info(f"Skipped {skipped} recipe(s).")
+                    st.info(f"Skipped {skipped}.")
                 if errors:
                     for err in errors:
                         st.error(err)
-                if imported:
-                    st.balloons()
+                st.rerun()
 
-        with col_b:
-            if st.button("Cancel", width="stretch"):
-                del st.session_state.import_parsed
+        with bc2:
+            if st.button("Start over", width="stretch"):
+                for key in ["cs_recipes", "cs_ing_by_name", "cs_prep_by_name", "cs_combined_pool"]:
+                    st.session_state.pop(key, None)
                 st.rerun()
 
 
