@@ -3313,30 +3313,45 @@ elif page == "Invoices":
             st.write(f"**Invoice date (as read):** {scan['invoice_date'] or 'not detected'}")
 
         # ---- Supplier handling ----
+        # Always show all three options regardless of whether a match was found.
+        # A wrong fuzzy match was previously silently locked in with no way to change it.
+        st.write("**Supplier**")
         if scan["supplier_matched"]:
-            st.write(f"**Supplier:** {scan['supplier_input']} → matched to existing supplier **{scan['supplier_matched']}**")
+            st.caption(f"Auto-matched '{scan['supplier_input']}' → **{scan['supplier_matched']}**. Change it below if wrong.")
         else:
-            st.write(f"**Supplier:** {scan['supplier_input']} — not matched to an existing supplier.")
-            supplier_action = st.radio(
-                "How should we handle this supplier?",
-                ["Create a new supplier", "Match to an existing supplier"],
-                key="inv_supplier_action", horizontal=True
-            )
-            if supplier_action == "Create a new supplier":
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.text_input("New supplier name", value=scan["supplier_input"], key="inv_new_supplier_name")
-                    st.text_input("UEN / Tax number", value=scan.get("supplier_uen", ""), key="inv_new_supplier_uen")
-                    st.text_input("Email", value=scan.get("supplier_email", ""), key="inv_new_supplier_email")
-                with col2:
-                    st.text_input("Contact number", value=scan.get("supplier_phone", ""), key="inv_new_supplier_phone")
-                    st.text_input("Address", value=scan.get("supplier_address", ""), key="inv_new_supplier_address")
-                    st.text_input("Payment terms", key="inv_new_supplier_terms")
-                    st.text_input("Delivery days", key="inv_new_supplier_days")
-            elif all_supplier_names:
-                st.selectbox("Match to existing supplier", all_supplier_names, key="inv_supplier_match_choice")
+            st.caption(f"'{scan['supplier_input']}' — no confident match found. Choose an option below.")
+
+        supplier_action = st.radio(
+            "What should we do with this supplier?",
+            ["Use matched supplier", "Match to a different existing supplier", "Create a new supplier"]
+            if scan["supplier_matched"] else
+            ["Match to an existing supplier", "Create a new supplier"],
+            key="inv_supplier_action", horizontal=True
+        )
+
+        if supplier_action == "Use matched supplier":
+            st.success(f"✓ Will use: **{scan['supplier_matched']}**")
+
+        elif supplier_action in ("Match to an existing supplier", "Match to a different existing supplier"):
+            if all_supplier_names:
+                default_idx = 0
+                if scan["supplier_matched"] and scan["supplier_matched"] in all_supplier_names:
+                    default_idx = all_supplier_names.index(scan["supplier_matched"])
+                st.selectbox("Choose supplier", all_supplier_names, index=default_idx, key="inv_supplier_match_choice")
             else:
-                st.info("No existing suppliers to match to — use 'Create a new supplier' instead.")
+                st.info("No suppliers in the system yet — use 'Create a new supplier' instead.")
+
+        elif supplier_action == "Create a new supplier":
+            col1, col2 = st.columns(2)
+            with col1:
+                st.text_input("Supplier name", value=scan["supplier_input"], key="inv_new_supplier_name")
+                st.text_input("UEN / Tax number", value=scan.get("supplier_uen", ""), key="inv_new_supplier_uen")
+                st.text_input("Email", value=scan.get("supplier_email", ""), key="inv_new_supplier_email")
+            with col2:
+                st.text_input("Contact number", value=scan.get("supplier_phone", ""), key="inv_new_supplier_phone")
+                st.text_input("Address", value=scan.get("supplier_address", ""), key="inv_new_supplier_address")
+                st.text_input("Payment terms", key="inv_new_supplier_terms")
+                st.text_input("Delivery days", key="inv_new_supplier_days")
 
         # ---- Line items ----
         INV_CATEGORIES = ["Dairy", "Dry Goods", "Frozen", "Meat & Seafood", "Pantry", "Produce", "Other"]
@@ -3478,14 +3493,25 @@ elif page == "Invoices":
         if st.button("Apply confirmed changes"):
             conn = db.get_connection()
 
-            # Step 1: resolve the supplier (existing match, newly created, or already auto-matched)
+            # Step 1: resolve the supplier
             resolved_supplier_id = None
             resolved_supplier_name = scan["supplier_matched"]
+            action = st.session_state.get("inv_supplier_action", "")
 
-            if scan["supplier_matched"]:
+            if action == "Use matched supplier" and scan["supplier_matched"]:
+                # Confirmed the auto-match — use it directly
                 existing_sup = conn.execute("SELECT id FROM suppliers WHERE name = ?", (scan["supplier_matched"],)).fetchone()
                 resolved_supplier_id = existing_sup["id"] if existing_sup else None
-            elif st.session_state.get("inv_supplier_action") == "Create a new supplier":
+
+            elif action in ("Match to an existing supplier", "Match to a different existing supplier"):
+                match_choice = st.session_state.get("inv_supplier_match_choice")
+                if match_choice:
+                    existing_sup = conn.execute("SELECT id FROM suppliers WHERE name = ?", (match_choice,)).fetchone()
+                    if existing_sup:
+                        resolved_supplier_id = existing_sup["id"]
+                        resolved_supplier_name = match_choice
+
+            elif action == "Create a new supplier":
                 new_sup_name = st.session_state.get("inv_new_supplier_name", "").strip()
                 if new_sup_name:
                     already = conn.execute("SELECT id FROM suppliers WHERE name = ?", (new_sup_name,)).fetchone()
@@ -3505,12 +3531,12 @@ elif page == "Invoices":
                         conn.commit()
                         resolved_supplier_id = conn.execute("SELECT id FROM suppliers WHERE name = ?", (new_sup_name,)).fetchone()["id"]
                     resolved_supplier_name = new_sup_name
+
             else:
-                match_choice = st.session_state.get("inv_supplier_match_choice")
-                if match_choice:
-                    matched_row = conn.execute("SELECT id FROM suppliers WHERE name = ?", (match_choice,)).fetchone()
-                    resolved_supplier_id = matched_row["id"] if matched_row else None
-                    resolved_supplier_name = match_choice
+                # Fallback: if there's a matched supplier and no explicit action, use it
+                if scan["supplier_matched"]:
+                    existing_sup = conn.execute("SELECT id FROM suppliers WHERE name = ?", (scan["supplier_matched"],)).fetchone()
+                    resolved_supplier_id = existing_sup["id"] if existing_sup else None
 
             log_supplier_label = resolved_supplier_name or scan["supplier_input"]
             applied_count = 0
