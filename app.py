@@ -557,6 +557,7 @@ if is_owner:
     nav_options.append("Invoices")
     nav_options.append("Staff")
     nav_options.append("Sales Sync")
+    nav_options.append("Import Costing Sheet")
     nav_options.append("Data Export")
 
 if "current_page" not in st.session_state:
@@ -576,6 +577,7 @@ NAV_ICONS = {
     "Staff": ":material/group:",
     "Sales Sync": ":material/sync:",
     "Group Dining": ":material/groups:",
+    "Import Costing Sheet": ":material/upload_file:",
     "Data Export": ":material/download:",
 }
 
@@ -2965,6 +2967,183 @@ elif page == "Sales Sync":
             "Processed": r["processed_at"], "By": r["processed_by"], "Items matched": r["items_matched"]
         } for r in sync_history]
         st.dataframe(pd.DataFrame(history_data), width="stretch", hide_index=True)
+
+
+# =========================================================
+# PAGE: IMPORT COSTING SHEET  (owner only)
+# =========================================================
+elif page == "Import Costing Sheet":
+    if not is_owner:
+        st.error("This page is restricted to the Owner account.")
+        st.stop()
+
+    st.title("Import costing sheet")
+    st.caption(
+        "Upload your Excel costing sheet. The app will read every recipe and match "
+        "each ingredient to your Master Stock List. Review the matches, fix any that "
+        "are wrong, then click Import — nothing is written until you confirm."
+    )
+
+    if "import_parsed" not in st.session_state:
+        st.session_state.import_parsed = None
+
+    uploaded = st.file_uploader("Costing sheet Excel file", type=["xlsx", "xls"])
+    if uploaded and st.button("Read file", type="primary"):
+        with st.spinner("Parsing the costing sheet..."):
+            try:
+                parsed = db.parse_costing_sheet(uploaded.getvalue())
+                st.session_state.import_parsed = parsed
+                st.rerun()
+            except Exception as e:
+                st.error(f"Couldn't read the file: {e}")
+
+    if st.session_state.import_parsed:
+        parsed = st.session_state.import_parsed
+
+        # Load existing ingredients and prep recipes for matching
+        conn = db.get_connection()
+        ing_rows = conn.execute("SELECT id, name, base_unit FROM ingredients ORDER BY name").fetchall()
+        prep_rows = conn.execute("SELECT id, name FROM recipes WHERE type='Prep' ORDER BY name").fetchall()
+        cat_rows = conn.execute("SELECT id, name, type FROM recipe_categories ORDER BY name").fetchall()
+        conn.close()
+
+        ing_names = [r["name"] for r in ing_rows]
+        ing_by_name = {r["name"]: r for r in ing_rows}
+        prep_names = [r["name"] for r in prep_rows]
+        prep_by_name = {r["name"]: r for r in prep_rows}
+        # Combined pool: ingredients + prep recipes (for items like "Pasta" which is a Prep)
+        combined_pool = ing_names + prep_names
+        dish_categories = [r for r in cat_rows if r["type"] == "Dish"]
+
+        st.write(f"**{len(parsed)} recipes found.** Review the ingredient matches below.")
+        st.caption(
+            "🟢 High confidence (≥80%) — pre-selected. "
+            "🟡 Low confidence (<80%) — check these. "
+            "Red means no match found."
+        )
+
+        # Pick a default Dish category for all imported recipes
+        if dish_categories:
+            cat_options = {c["name"]: c["id"] for c in dish_categories}
+            default_cat = st.selectbox(
+                "Import all recipes into this category",
+                list(cat_options.keys()),
+                key="import_category"
+            )
+            default_cat_id = cat_options[default_cat]
+        else:
+            st.warning("No Dish categories exist yet — please add one in Recipes first.")
+            st.stop()
+
+        st.write("")
+
+        # Build the review UI — one expander per recipe
+        for r_idx, recipe in enumerate(parsed):
+            ing_count = len(recipe["ingredients"])
+            with st.expander(
+                f"**{recipe['name']}** — {ing_count} ingredient(s)"
+                + (f" · sell ${recipe['sell_px']:.2f}" if recipe["sell_px"] else ""),
+                expanded=(ing_count == 0)
+            ):
+                if ing_count == 0:
+                    st.warning("No ingredients found for this recipe in the sheet. It will be imported as an empty recipe for you to fill in manually.")
+                    st.checkbox("Skip this recipe", value=False, key=f"skip_{r_idx}")
+                    continue
+
+                st.checkbox("Skip this recipe", value=False, key=f"skip_{r_idx}")
+                st.caption("For each ingredient, confirm or correct the match to your Master Stock List.")
+
+                for i_idx, ing in enumerate(recipe["ingredients"]):
+                    match_name, score = db.find_best_match(ing["name"], combined_pool)
+                    col1, col2, col3 = st.columns([2, 3, 1])
+                    with col1:
+                        st.write(f"**{ing['name']}**")
+                        st.caption(f"{ing['qty']:g} {ing['unit']}")
+                    with col2:
+                        confidence = "🟢" if score >= 0.8 else ("🟡" if score >= 0.5 else "🔴")
+                        match_hint = f"{confidence} {match_name} ({score:.0%})" if match_name else "🔴 No match found"
+                        override_options = ["-- skip this ingredient --"] + combined_pool
+                        default_idx = 0
+                        if match_name and match_name in combined_pool:
+                            default_idx = combined_pool.index(match_name) + 1
+                        st.selectbox(
+                            f"Match for {ing['name']}",
+                            override_options,
+                            index=default_idx,
+                            key=f"match_{r_idx}_{i_idx}",
+                            label_visibility="collapsed",
+                            help=f"Auto-matched: {match_hint}"
+                        )
+                    with col3:
+                        st.caption(match_hint)
+
+        st.write("")
+        st.divider()
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Import confirmed recipes", type="primary", width="stretch"):
+                conn = db.get_connection()
+                imported, skipped, errors = 0, 0, []
+
+                for r_idx, recipe in enumerate(parsed):
+                    if st.session_state.get(f"skip_{r_idx}"):
+                        skipped += 1
+                        continue
+
+                    try:
+                        # Create the recipe
+                        conn.execute(
+                            "INSERT INTO recipes (name, type, category_id, selling_price) VALUES (?, 'Dish', ?, ?)",
+                            (recipe["name"], default_cat_id, recipe["sell_px"])
+                        )
+                        new_recipe_id = conn.execute(
+                            "SELECT id FROM recipes WHERE name=? AND category_id=? ORDER BY id DESC LIMIT 1",
+                            (recipe["name"], default_cat_id)
+                        ).fetchone()["id"]
+
+                        # Add each ingredient line
+                        for i_idx, ing in enumerate(recipe["ingredients"]):
+                            chosen = st.session_state.get(f"match_{r_idx}_{i_idx}", "-- skip this ingredient --")
+                            if chosen == "-- skip this ingredient --" or not chosen:
+                                continue
+
+                            if chosen in prep_by_name:
+                                # It's a Prep sub-recipe
+                                sub = prep_by_name[chosen]
+                                conn.execute(
+                                    "INSERT INTO recipe_lines (parent_recipe_id, sub_recipe_id, quantity) VALUES (?, ?, ?)",
+                                    (new_recipe_id, sub["id"], ing["qty"])
+                                )
+                            elif chosen in ing_by_name:
+                                # It's a raw ingredient
+                                raw = ing_by_name[chosen]
+                                conn.execute(
+                                    "INSERT INTO recipe_lines (parent_recipe_id, ingredient_id, quantity) VALUES (?, ?, ?)",
+                                    (new_recipe_id, raw["id"], ing["qty"])
+                                )
+
+                        conn.commit()
+                        imported += 1
+                    except Exception as e:
+                        errors.append(f"{recipe['name']}: {e}")
+
+                conn.close()
+                del st.session_state.import_parsed
+
+                if imported:
+                    st.success(f"✅ Imported {imported} recipe(s).")
+                if skipped:
+                    st.info(f"Skipped {skipped} recipe(s).")
+                if errors:
+                    for err in errors:
+                        st.error(err)
+                if imported:
+                    st.balloons()
+
+        with col_b:
+            if st.button("Cancel", width="stretch"):
+                del st.session_state.import_parsed
+                st.rerun()
 
 
 # =========================================================

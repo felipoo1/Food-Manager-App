@@ -1109,6 +1109,95 @@ def generate_group_dining_pdf(menu_row, selections_json, dietary_notes,
     return buf.getvalue()
 
 
+def parse_costing_sheet(file_bytes):
+    """
+    Parses a Tea Party Cafe costing sheet Excel file.
+    Returns a list of recipe dicts:
+    [{"name": str, "sell_px": float|None, "ingredients": [
+        {"name": str, "qty": float, "unit": str}
+    ]}]
+    Handles both column layouts found in the sheet (cols A/C/E/G vs A/B/D/F).
+    """
+    import io, re
+    import pandas as pd
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(file_bytes), read_only=True)
+    ws = wb.active
+    all_rows = list(ws.iter_rows(values_only=True))
+
+    SKIP = {
+        'item', 'cost', 'uom', 'mark up', 'inflation', 'svc', 'mdr', 'gst', 'cc',
+        'total cost', 'disposables', 'soup+drink set', 'set meal cost', 'sell px',
+        'cost', 'sauce', 'drink set', 'sauce '
+    }
+
+    def is_recipe_header(row):
+        a = str(row[0] or '').strip()
+        return bool(a) and ('BIO' in a or 'ALL' in a) and not any(
+            v for v in row[1:8] if v is not None
+        )
+
+    def detect_layout(rows, start):
+        for i in range(start, min(start + 3, len(rows))):
+            r = rows[i]
+            vals = [str(v or '').lower().strip() for v in r[:10]]
+            if 'item' in vals and 'cost' in vals:
+                cost_col = next(j for j, v in enumerate(vals) if v == 'cost')
+                item_col = next(j for j, v in enumerate(vals) if v == 'item')
+                qty_col = item_col + 1
+                uom_col = cost_col - 1
+                return item_col, qty_col, uom_col, cost_col
+        return 0, 2, 4, 6  # default layout
+
+    recipes = []
+    i = 0
+    while i < len(all_rows):
+        row = all_rows[i]
+        if is_recipe_header(row):
+            a = str(row[0] or '').strip()
+            name = re.sub(r'\s*(BIO\s*\+?\s*BT|BIO|ALL)\s*.*', '', a,
+                          flags=re.IGNORECASE).strip()
+            ic, qc, uc, cc = detect_layout(all_rows, i + 1)
+            ingredients = []
+            sell_px = None
+            i += 1
+            while i < len(all_rows):
+                r = all_rows[i]
+                ra = str(r[0] or '').strip()
+                if is_recipe_header(r):
+                    break
+                if ra.lower() == 'sell px' and len(r) > cc and r[cc] is not None:
+                    try:
+                        sell_px = float(r[cc])
+                    except (TypeError, ValueError):
+                        pass
+                if ra and ra.lower() not in SKIP and len(r) > cc:
+                    try:
+                        qty_val = r[qc] if qc < len(r) else None
+                        uom_val = r[uc] if uc < len(r) else None
+                        if qty_val is not None and isinstance(qty_val, (int, float)) and float(qty_val) > 0:
+                            unit = str(uom_val or '').lower().strip()
+                            unit = 'g' if unit in ('gm', 'gram', 'grams', 'g') else unit
+                            unit = 'ml' if unit in ('milliliter', 'millilitre') else unit
+                            unit = 'each' if unit in ('pc', 'pcs', 'piece', '') else unit
+                            if unit not in ('g', 'ml', 'each'):
+                                unit = 'each'
+                            ingredients.append({
+                                'name': ra,
+                                'qty': float(qty_val),
+                                'unit': unit
+                            })
+                    except (TypeError, ValueError, IndexError):
+                        pass
+                i += 1
+            recipes.append({'name': name, 'sell_px': sell_px, 'ingredients': ingredients})
+        else:
+            i += 1
+
+    return recipes
+
+
 def find_best_match(target_text, candidates):
     """
     Fuzzy-matches a piece of text (e.g. an invoice line item description)
