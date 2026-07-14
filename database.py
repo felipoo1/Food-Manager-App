@@ -1134,8 +1134,10 @@ def parse_costing_sheet(file_bytes):
 
     def is_recipe_header(row):
         a = str(row[0] or '').strip()
+        # Only check cols B–G (indices 1–6) — the "ALL" recipe name sits at col H or I
+        # and must NOT be treated as content that disqualifies a header row.
         return bool(a) and ('BIO' in a or 'ALL' in a) and not any(
-            v for v in row[1:8] if v is not None
+            v for v in row[1:7] if v is not None
         )
 
     def detect_layout(rows, start):

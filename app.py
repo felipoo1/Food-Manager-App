@@ -2990,7 +2990,64 @@ elif page == "Import Costing Sheet":
         if uploaded and st.button("Read file", type="primary"):
             with st.spinner("Reading the costing sheet..."):
                 try:
-                    parsed = db.parse_costing_sheet(uploaded.getvalue())
+                    import re as _re, io as _io
+                    from openpyxl import load_workbook as _lwb
+
+                    _wb = _lwb(_io.BytesIO(uploaded.getvalue()), read_only=True)
+                    _ws = _wb.active
+                    _all = list(_ws.iter_rows(values_only=True))
+
+                    _SKIP = {'item','cost','uom','mark up','inflation','svc','mdr','gst','cc',
+                             'total cost','disposables','soup+drink set','set meal cost',
+                             'sell px','sauce','drink set'}
+
+                    def _is_hdr(row):
+                        a = str(row[0] or '').strip()
+                        return bool(a) and ('BIO' in a or 'ALL' in a) and not any(v for v in row[1:7] if v is not None)
+
+                    def _layout(rows, start):
+                        for i in range(start, min(start+3, len(rows))):
+                            r = rows[i]
+                            vals = [str(v or '').lower().strip() for v in r[:10]]
+                            if 'item' in vals and 'cost' in vals:
+                                cc = next(j for j,v in enumerate(vals) if v=='cost')
+                                ic = next(j for j,v in enumerate(vals) if v=='item')
+                                return ic, ic+1, cc-1, cc
+                        return 0,2,4,6
+
+                    _recipes, _i = [], 0
+                    while _i < len(_all):
+                        _row = _all[_i]
+                        if _is_hdr(_row):
+                            _a = str(_row[0] or '').strip()
+                            _name = _re.sub(r'\s*(BIO\s*\+?\s*BT|BIO|ALL)\s*.*','',_a,flags=_re.IGNORECASE).strip()
+                            _ic,_qc,_uc,_cc = _layout(_all, _i+1)
+                            _ings, _sell = [], None
+                            _i += 1
+                            while _i < len(_all):
+                                _r = _all[_i]
+                                _ra = str(_r[0] or '').strip()
+                                if _is_hdr(_r): break
+                                if _ra.lower() == 'sell px' and len(_r)>_cc and _r[_cc] is not None:
+                                    try: _sell = float(_r[_cc])
+                                    except: pass
+                                if _ra and _ra.lower() not in _SKIP and len(_r)>_cc:
+                                    try:
+                                        _qv = _r[_qc] if _qc<len(_r) else None
+                                        _uv = _r[_uc] if _uc<len(_r) else None
+                                        if _qv is not None and isinstance(_qv,(int,float)) and float(_qv)>0:
+                                            _u = str(_uv or '').lower().strip()
+                                            _u = 'g' if _u in ('gm','gram','grams','g') else _u
+                                            _u = 'ml' if _u in ('ml','milliliter','millilitre') else _u
+                                            if _u not in ('g','ml'): _u='each'
+                                            _ings.append({'name':_ra,'qty':float(_qv),'unit':_u})
+                                    except: pass
+                                _i += 1
+                            _recipes.append({'name':_name,'sell_px':_sell,'ingredients':_ings})
+                        else:
+                            _i += 1
+
+                    parsed = _recipes
 
                     # Load ingredients + preps for auto-matching
                     conn = db.get_connection()
