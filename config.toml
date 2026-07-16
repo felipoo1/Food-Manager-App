@@ -17,3 +17,6 @@ showSidebarBorder = true
 backgroundColor = "#FFFFFF"
 textColor = "#475569"
 borderColor = "#E5E5E5"
+
+[client]
+toolbarMode = "minimal"
