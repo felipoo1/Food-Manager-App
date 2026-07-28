@@ -333,9 +333,12 @@ def init_db():
             reverted INTEGER DEFAULT 0,
             reverted_by TEXT,
             reverted_at TEXT,
+            completion_note TEXT,
             FOREIGN KEY (task_id) REFERENCES task_definitions(id) ON DELETE CASCADE
         )
     """)
+
+    _ensure_column("task_log", "completion_note", "TEXT")
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS stock_takes (
@@ -966,148 +969,80 @@ def get_all_active_group_menus(conn=None):
 def generate_group_dining_pdf(menu_row, selections_json, dietary_notes,
                                total_base, total_surcharges, total_amount):
     """
-    Generates a clean, printable order summary PDF for a group dining booking.
-    Returns the PDF as bytes, ready for st.download_button or to send to the customer.
-    Uses reportlab's Platypus flow engine so the layout expands correctly
-    regardless of how many menu items are selected.
+    Generates a clean, branded order summary as HTML bytes.
+    Opens natively in any browser or phone — no extra libraries needed.
+    Named 'pdf' for API compatibility but returns HTML with .html extension.
     """
-    import io, json as _json
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import mm
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib import colors
-    from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
-    )
+    import json as _j
 
-    # ---- Brand colours ----
-    ORANGE  = colors.HexColor("#F26419")
-    DARK    = colors.HexColor("#1E293B")
-    MUTED   = colors.HexColor("#64748B")
-    LIGHT   = colors.HexColor("#F8FAFC")
-    BORDER  = colors.HexColor("#E2E8F0")
-    GREEN   = colors.HexColor("#16A34A")
+    sel = _j.loads(selections_json) if isinstance(selections_json, str) else selections_json
+    res_time = menu_row.get("reservation_time", "") or ""
 
-    buf = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=20*mm, rightMargin=20*mm,
-        topMargin=18*mm, bottomMargin=18*mm
-    )
-
-    styles = getSampleStyleSheet()
-    def style(name, **kwargs):
-        return ParagraphStyle(name, parent=styles["Normal"], **kwargs)
-
-    heading1  = style("h1", fontSize=22, textColor=DARK,    fontName="Helvetica-Bold", spaceAfter=4)
-    heading2  = style("h2", fontSize=13, textColor=DARK,    fontName="Helvetica-Bold", spaceBefore=14, spaceAfter=4)
-    body_dark = style("bd", fontSize=11, textColor=DARK,    fontName="Helvetica")
-    body_muted= style("bm", fontSize=10, textColor=MUTED,   fontName="Helvetica")
-    small     = style("sm", fontSize=9,  textColor=MUTED,   fontName="Helvetica")
-    total_lbl = style("tl", fontSize=10, textColor=MUTED,   fontName="Helvetica")
-    total_val = style("tv", fontSize=13, textColor=DARK,    fontName="Helvetica-Bold")
-    grand_val = style("gv", fontSize=16, textColor=ORANGE,  fontName="Helvetica-Bold")
-
-    story = []
-
-    # ---- Header ----
-    header_data = [[
-        Paragraph("<b>The Tea Party Cafe</b>", style("hdr", fontSize=14, textColor=ORANGE, fontName="Helvetica-Bold")),
-        Paragraph("Group Dining — Order Summary", style("sub", fontSize=10, textColor=MUTED, fontName="Helvetica", alignment=2))
-    ]]
-    header_tbl = Table(header_data, colWidths=["60%", "40%"])
-    header_tbl.setStyle(TableStyle([
-        ("VALIGN",       (0,0), (-1,-1), "MIDDLE"),
-        ("BOTTOMPADDING",(0,0), (-1,-1), 8),
-    ]))
-    story.append(header_tbl)
-    story.append(HRFlowable(width="100%", thickness=2, color=ORANGE, spaceAfter=10))
-
-    # ---- Booking details ----
-    story.append(Paragraph(menu_row["customer_name"], heading1))
-    details = [
-        ["Event date",  menu_row["event_date"]],
-        ["Time",        menu_row.get("reservation_time", "") or "—"],
-        ["Party size",  f"{menu_row['pax_count']} pax"],
-        ["Base price",  f"${menu_row['base_price_per_pax']:.2f} / pax"],
-        ["Menu version", f"v{menu_row['version']}"],
-    ]
-    det_tbl = Table(details, colWidths=[40*mm, None])
-    det_tbl.setStyle(TableStyle([
-        ("FONTNAME",    (0,0), (0,-1), "Helvetica-Bold"),
-        ("FONTSIZE",    (0,0), (-1,-1), 10),
-        ("TEXTCOLOR",   (0,0), (0,-1), MUTED),
-        ("TEXTCOLOR",   (1,0), (1,-1), DARK),
-        ("TOPPADDING",  (0,0), (-1,-1), 3),
-        ("BOTTOMPADDING",(0,0),(-1,-1), 3),
-    ]))
-    story.append(det_tbl)
-    story.append(Spacer(1, 6))
-    story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER, spaceAfter=6))
-
-    # ---- Selections ----
-    sel = _json.loads(selections_json)
+    rows_html = ""
     for section_name, items in sel.get("sections", {}).items():
-        chosen = [(name, qty) for name, qty in items.items() if qty and qty > 0]
+        chosen = [(name, qty) for name, qty in items.items() if qty and int(qty) > 0]
         if not chosen:
             continue
-        story.append(Paragraph(section_name.upper(), style(
-            "sec", fontSize=9, textColor=ORANGE, fontName="Helvetica-Bold",
-            spaceBefore=10, spaceAfter=4
-        )))
-        rows = [["Item", "Qty"]]
+        rows_html += f"""
+        <tr class="section-row"><td colspan="2">{section_name.upper()}</td></tr>
+        """
         for name, qty in chosen:
-            rows.append([Paragraph(name, body_dark), Paragraph(str(qty), body_dark)])
-        tbl = Table(rows, colWidths=[None, 18*mm])
-        tbl.setStyle(TableStyle([
-            ("BACKGROUND",   (0,0), (-1,0), LIGHT),
-            ("FONTNAME",     (0,0), (-1,0), "Helvetica-Bold"),
-            ("FONTSIZE",     (0,0), (-1,-1), 10),
-            ("TEXTCOLOR",    (0,0), (-1,0), MUTED),
-            ("GRID",         (0,0), (-1,-1), 0.5, BORDER),
-            ("TOPPADDING",   (0,0), (-1,-1), 5),
-            ("BOTTOMPADDING",(0,0), (-1,-1), 5),
-            ("ROWBACKGROUNDS",(0,1),(-1,-1), [colors.white, LIGHT]),
-            ("ALIGN",        (1,0), (1,-1), "CENTER"),
-        ]))
-        story.append(tbl)
+            rows_html += f"<tr><td>{name}</td><td class='qty'>{qty}</td></tr>"
 
-    # ---- Dietary notes ----
-    if dietary_notes and dietary_notes.strip():
-        story.append(Spacer(1, 8))
-        story.append(Paragraph("Dietary notes / special requests", heading2))
-        story.append(Paragraph(dietary_notes, body_dark))
+    diet_html = f"<div class='notes'><strong>Dietary notes:</strong> {dietary_notes}</div>" if dietary_notes and dietary_notes.strip() else ""
 
-    # ---- Totals ----
-    story.append(Spacer(1, 10))
-    story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER, spaceAfter=8))
-    total_rows = [
-        [Paragraph("Base amount", total_lbl), Paragraph(f"${total_base:.2f}", total_val)],
-        [Paragraph("Surcharges",  total_lbl), Paragraph(f"${total_surcharges:.2f}", total_val)],
-        [Paragraph("TOTAL",       style("gt", fontSize=12, textColor=DARK, fontName="Helvetica-Bold")),
-         Paragraph(f"${total_amount:.2f}", grand_val)],
-    ]
-    tot_tbl = Table(total_rows, colWidths=[None, 36*mm])
-    tot_tbl.setStyle(TableStyle([
-        ("ALIGN",        (1,0), (1,-1), "RIGHT"),
-        ("TOPPADDING",   (0,0), (-1,-1), 4),
-        ("BOTTOMPADDING",(0,0), (-1,-1), 4),
-        ("LINEABOVE",    (0,2), (-1,2), 1, DARK),
-    ]))
-    story.append(tot_tbl)
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Order Summary — {menu_row['customer_name']}</title>
+<style>
+  body {{ font-family: 'Helvetica Neue', Arial, sans-serif; max-width: 680px; margin: 40px auto; padding: 20px; color: #1E293B; }}
+  .header {{ border-bottom: 3px solid #F26419; padding-bottom: 16px; margin-bottom: 24px; }}
+  .cafe-name {{ color: #F26419; font-size: 20px; font-weight: 700; margin: 0 0 4px; }}
+  .doc-title {{ font-size: 14px; color: #64748B; margin: 0; }}
+  .booking {{ background: #F8FAFC; border-radius: 8px; padding: 16px; margin-bottom: 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }}
+  .booking-item {{ font-size: 14px; }} .booking-item strong {{ color: #64748B; font-weight: 600; }}
+  table {{ width: 100%; border-collapse: collapse; margin-bottom: 24px; }}
+  th {{ background: #F8FAFC; text-align: left; padding: 10px 12px; font-size: 11px; color: #64748B; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #E2E8F0; }}
+  td {{ padding: 10px 12px; border-bottom: 1px solid #F1F5F9; font-size: 14px; }}
+  .section-row td {{ background: #FFF7F0; color: #F26419; font-size: 11px; font-weight: 700; letter-spacing: 0.8px; padding: 8px 12px; }}
+  .qty {{ text-align: right; font-weight: 600; }}
+  .totals {{ background: #1E293B; color: white; border-radius: 8px; padding: 16px 20px; display: flex; justify-content: space-between; }}
+  .total-item {{ font-size: 13px; }} .total-label {{ color: #94A3B8; margin-bottom: 2px; }}
+  .total-value {{ font-size: 18px; font-weight: 700; }} .grand {{ color: #F26419; font-size: 22px; }}
+  .notes {{ background: #FFFBEB; border-left: 3px solid #F59E0B; padding: 12px 16px; margin-bottom: 24px; font-size: 14px; border-radius: 0 6px 6px 0; }}
+  .footer {{ text-align: center; font-size: 12px; color: #94A3B8; margin-top: 32px; padding-top: 16px; border-top: 1px solid #E2E8F0; }}
+  @media print {{ body {{ margin: 20px; }} }}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="cafe-name">☕ The Tea Party Cafe</div>
+  <div class="doc-title">Group Dining — Order Summary</div>
+</div>
+<div class="booking">
+  <div class="booking-item"><strong>Booking for</strong><br>{menu_row['customer_name']}</div>
+  <div class="booking-item"><strong>Event date</strong><br>{menu_row['event_date']}{f' · {res_time}' if res_time else ''}</div>
+  <div class="booking-item"><strong>Party size</strong><br>{menu_row['pax_count']} pax</div>
+  <div class="booking-item"><strong>Base price</strong><br>${menu_row['base_price_per_pax']:.2f} / pax</div>
+</div>
+<table>
+  <thead><tr><th>Item</th><th style="text-align:right">Qty</th></tr></thead>
+  <tbody>{rows_html}</tbody>
+</table>
+{diet_html}
+<div class="totals">
+  <div class="total-item"><div class="total-label">Base</div><div class="total-value">${total_base:.2f}</div></div>
+  <div class="total-item"><div class="total-label">Surcharges</div><div class="total-value">${total_surcharges:.2f}</div></div>
+  <div class="total-item"><div class="total-label">Total</div><div class="total-value grand">${total_amount:.2f}</div></div>
+</div>
+<div class="footer">The Tea Party Cafe · 21 Biopolis Road #01-21 · Singapore 138567 · Tel: 89239398</div>
+</body>
+</html>"""
 
-    # ---- Footer ----
-    story.append(Spacer(1, 14))
-    story.append(HRFlowable(width="100%", thickness=0.5, color=BORDER, spaceAfter=4))
-    story.append(Paragraph(
-        f"Generated by Cafe Manager · The Tea Party Cafe · {menu_row['event_date']}",
-        style("ft", fontSize=8, textColor=MUTED, fontName="Helvetica", alignment=1)
-    ))
-
-    doc.build(story)
-    buf.seek(0)
-    return buf.getvalue()
-
+    return html.encode("utf-8")
 
 def parse_costing_sheet(file_bytes):
     """

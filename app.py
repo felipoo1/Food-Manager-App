@@ -66,7 +66,7 @@ st.markdown(f"""
 # process never fully restarts -- this is what prevents the exact bug where
 # new tables silently don't get created because a stale cached "already set
 # up" result from before the change was reused.
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 @st.cache_resource
@@ -250,8 +250,8 @@ if _menu_token:
             st.download_button(
                 "📄 Download your order summary (PDF)",
                 data=pdf_bytes,
-                file_name=f"order_summary_{event_date}.pdf",
-                mime="application/pdf",
+                file_name=f"order_summary_{event_date}.html",
+                mime="text/html",
             )
         st.stop()
 
@@ -341,8 +341,8 @@ if _menu_token:
         st.download_button(
             "📄 Download current order summary (PDF)",
             data=pdf_bytes_preview,
-            file_name=f"order_summary_{event_date}.pdf",
-            mime="application/pdf",
+            file_name=f"order_summary_{event_date}.html",
+            mime="text/html",
         )
     if st.button(btn_label, type="primary", width="stretch"):
         final_sel = _json.dumps({"sections": section_selections})
@@ -379,8 +379,8 @@ if _menu_token:
         st.download_button(
             "📄 Download your order summary (PDF)",
             data=pdf_bytes,
-            file_name=f"order_summary_{menu['event_date']}.pdf",
-            mime="application/pdf",
+            file_name=f"order_summary_{menu['event_date']}.html",
+            mime="text/html",
         )
         st.balloons()
     st.stop()
@@ -779,8 +779,16 @@ if page == "Tasks":
                                     else:
                                         st.badge("Weekly", color="orange")
                                 if t["notes"]:
-                                    with st.expander("Notes"):
+                                    with st.expander("Task notes"):
                                         st.write(t["notes"])
+
+                                # Show any staff note left when completing this task
+                                if is_done:
+                                    existing_note = conn.execute(
+                                        "SELECT completion_note FROM task_log WHERE id = ?", (log_id,)
+                                    ).fetchone()
+                                    if existing_note and existing_note["completion_note"]:
+                                        st.info(f"💬 {completed_by}: {existing_note['completion_note']}")
 
                             with row_cols[1]:
                                 if is_done:
@@ -794,6 +802,12 @@ if page == "Tasks":
                                         st.rerun()
                                 elif st.session_state.pending_pin_task == pending_key:
                                     pin_try = pin_entry_boxes(f"task_pin_{t['id']}")
+                                    # Optional note field — staff can leave a message for colleagues
+                                    task_note = st.text_input(
+                                        "Leave a note (optional)",
+                                        placeholder="e.g. Done but fridge needs restocking...",
+                                        key=f"task_note_{t['id']}"
+                                    )
                                     confirm_col, cancel_col = st.columns(2)
                                     with confirm_col:
                                         if st.button("Confirm", key=f"confirm_{t['id']}"):
@@ -806,9 +820,10 @@ if page == "Tasks":
                                                     clear_pin_boxes(f"task_pin_{t['id']}")
                                                 else:
                                                     week_val = db.get_week_start() if t["recurrence"] == "weekly" else None
+                                                    note_val = st.session_state.get(f"task_note_{t['id']}", "").strip() or None
                                                     conn.execute(
-                                                        "INSERT INTO task_log (task_id, week_start_date, completed_by, completed_at) VALUES (?, ?, ?, ?)",
-                                                        (t["id"], week_val, staff_match["name"], datetime.now().strftime("%-I:%M %p"))
+                                                        "INSERT INTO task_log (task_id, week_start_date, completed_by, completed_at, completion_note) VALUES (?, ?, ?, ?, ?)",
+                                                        (t["id"], week_val, staff_match["name"], datetime.now().strftime("%-I:%M %p"), note_val)
                                                     )
                                                     conn.commit()
                                                     st.session_state.pending_pin_task = None
@@ -2637,8 +2652,8 @@ elif page == "Group Dining":
                         st.download_button(
                             "Download order summary PDF",
                             data=pdf_bytes,
-                            file_name=f"{m['customer_name'].replace(' ','_')}_{m['event_date']}_order.pdf",
-                            mime="application/pdf",
+                            file_name=f"{m['customer_name'].replace(' ','_')}_{m['event_date']}_order.html",
+                            mime="text/html",
                             key=f"pdf_{m['id']}"
                         )
 
@@ -3287,7 +3302,7 @@ elif page == "Task History":
     query = """
         SELECT td.title, td.section, td.day_of_week, td.recurrence,
                tl.week_start_date, tl.completed_by, tl.completed_at, tl.id AS log_id,
-               tl.reverted, tl.reverted_by, tl.reverted_at
+               tl.reverted, tl.reverted_by, tl.reverted_at, tl.completion_note
         FROM task_log tl
         JOIN task_definitions td ON tl.task_id = td.id
     """
@@ -3310,6 +3325,7 @@ elif page == "Task History":
             "Week of": r["week_start_date"] or "-",
             "Completed by": r["completed_by"],
             "Completed at": r["completed_at"],
+            "Note": r["completion_note"] or "",
             "Status": (
                 f"↩️ Reverted by {r['reverted_by']} at {r['reverted_at']}" if r["reverted"] else "✅ Completed"
             ),
