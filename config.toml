@@ -1,113 +1,24 @@
-# TPC Command Centre — design handoff
+[theme]
+primaryColor = "#c67139"
+backgroundColor = "#f9f4ed"
+secondaryBackgroundColor = "#eee7db"
+textColor = "#201e1d"
+linkColor = "#8c491a"
+font = "Nunito:https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "Nunito:https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap, sans-serif"
+baseFontSize = 15
+baseFontWeight = 400
+baseRadius = "large"
+buttonRadius = "full"
+borderColor = "#dcd3c4"
+showWidgetBorder = true
+showSidebarBorder = false
 
-Internal operations app for The Tea Party Cafe (21 Biopolis Road #01-21,
-Singapore 138567). This package covers the redesign of the existing Streamlit
-app (`felipoo1/Food-Manager-App`, branch `main`) — it does not change any
-business logic.
+[theme.sidebar]
+backgroundColor = "#f9f4ed"
+secondaryBackgroundColor = "#eee7db"
+textColor = "#201e1d"
+borderColor = "#dcd3c4"
 
-## What's in this project
-
-| File | What it is |
-| --- | --- |
-| `TPC Command Centre.dc.html` | The design. Live and clickable: collapsible sidebar, nine screens, working tick-boxes / counts / order quantities. Open it in a browser. |
-| `TPC on phone.dc.html` | The same design inside iPhone frames. |
-| `streamlit/config.toml` | Drop-in replacement for `.streamlit/config.toml` — palette, Nunito, radii. |
-| `streamlit/theme_css.py` | `inject_theme()` CSS for the parts config.toml can't reach (sidebar pills, cards, dataframes, tick-boxes, density). |
-| `_ds/organic-…/styles.css` | The design system the mock is built on — source of every token below. |
-
-## Route 1 — restyle the existing Streamlit app (≈80% of the look, an afternoon)
-
-1. Copy `streamlit/config.toml` over `.streamlit/config.toml`.
-2. Copy `streamlit/theme_css.py` next to `app.py`.
-3. In `app.py`, immediately after `st.set_page_config(...)`:
-
-   ```python
-   from theme_css import inject_theme
-   inject_theme()
-   ```
-
-4. Sidebar active page: the design shows the current page as a solid ink pill.
-   The existing code (around `app.py:584`) prints the active item as markdown
-   instead of a button. Render it as a **disabled button** so it picks up the
-   active-pill rule:
-
-   ```python
-   for option in nav_options:
-       st.sidebar.button(
-           option, key=f"nav_{option}", type="tertiary", width="stretch",
-           disabled=(option == st.session_state.current_page),
-           on_click=lambda o=option: st.session_state.update(current_page=o),
-       )
-   ```
-
-5. Drop the per-page `st.markdown("<style>…")` blocks that fight the new theme
-   (the sidebar rules at `app.py:458-505`), and let `inject_theme()` own it.
-6. Use `theme_css.tag(label, tone)` for status pills. Keep `tone="alert"`
-   (terracotta) for things that need action only: over-tolerance variances,
-   price rises, PINs needing reset, unmatched sales rows.
-
-What route 1 will **not** give you: the weekly task board as cards, the
-horizontally scrolling phone nav, the collapsible rail, the stock-take table
-with inline counted inputs. Those are layout, not styling.
-
-## Route 2 — rebuild the front end (full fidelity)
-
-Keep `database.py` exactly as it is — it is the contract. The redesign is
-presentation only; every field shown in the mock already exists in the schema.
-
-Suggested split: FastAPI (or Flask) wrapping the existing `database.py`
-functions as JSON endpoints, a static front end built from the mock's markup,
-and the PIN gate as a session cookie instead of `st.session_state`.
-
-## Design tokens
-
-Taken from `_ds/organic-…/styles.css`. Nothing outside this list appears in
-the design.
-
-| Token | Value | Used for |
-| --- | --- | --- |
-| neutral-100 | `#f9f4ed` | cards, sidebar, main surface |
-| neutral-200 | `#eee7db` | page ground, inner rows, inputs |
-| neutral-300 | `#dcd3c4` | borders, dividers, day-card fills |
-| neutral-400 | `#c0b6a5` | unchecked tick-box rings, dots |
-| neutral-600 | `#82796a` | metadata text |
-| neutral-700 | `#645c50` | body copy on tinted fills |
-| neutral-800 | `#474238` | active nav pill, brand mark, checked tick-box |
-| ink | `#201e1d` | primary text |
-| accent | `#c67139` | primary buttons, alert pills — sparingly |
-| accent-100 / 700 | `#fff2eb` / `#8c491a` | alert pill fill / alert text, links |
-
-Type: **Nunito** — 700 for headings (h1 ≈ 34px fluid down to 27px), 400/600 for
-body at 15px. Metadata 12px; nothing below 11px.
-
-Radii: 999px for buttons, inputs and pills; 16px for inner rows and photos;
-28px for cards and panels. Shadows: one soft `0 1px 2px rgba(46,43,37,0.14)` —
-elevation is minimal by design.
-
-Layout: max width 1180px; sidebar 216px, collapsing to a 62px rail of
-three-letter codes; below 720px the sidebar becomes a header — brand, user chip
-and actions on one row, nav in a single side-scrolling pill strip.
-
-## Screen map — design → existing code
-
-| Screen | Source in `app.py` |
-| --- | --- |
-| Sidebar + role gate | sidebar nav (`nav_options`, `NAV_ICONS`), PIN login |
-| Weekly tasks | Tasks page — weekly reset, Kitchen/Floor sections, completion notes |
-| Weekly stock take | Stock Take page — ±1 kg / ±1 L / ±1 unit tolerance, variance report |
-| Master stock list | Master Stock List page — pack size, purchase price, cost per recipe unit, stock on hand |
-| Recipes | Recipes page — Prep/Dish/Beverage tabs, categories with images, 9% GST costs, conversions |
-| Orders | Orders + Suppliers pages |
-| Group dining | Group Dining page — set-menu PDF, `?menu=TOKEN` links, per-pax base + surcharges, 3-day cut-off |
-| Staff & PINs | Staff page |
-| Invoice scanning | Invoices page — recent price changes from invoices |
-| Sales sync | Sales Sync page — upload, review, sync history |
-
-## Open items for you
-
-- The mock's data is realistic placeholder. Real ingredient names, pack sizes
-  and recipe costs would make it a genuine review artefact.
-- Recipe category photos are empty slots — drop real photos in.
-- Not yet designed: the PIN lock screen, Notifications as a full page, Task
-  History, Import Costing Sheet, Data Export, and the customer-facing group
-  dining selection form (which has its own look today).
+[client]
+toolbarMode = "minimal"
