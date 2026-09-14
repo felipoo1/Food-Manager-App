@@ -1,19 +1,32 @@
+# Cafe Manager — Theme: "Neutral Command Centre"
+# Matches the TPC Command Centre design (neutral sand/stone palette, Nunito,
+# pill buttons, generous radii). Terracotta is kept for alerts only, so it
+# reads as an accent rather than the whole interface.
+#
+# Replace .streamlit/config.toml with this file.
+
 [theme]
-primaryColor = "#c67139"
-backgroundColor = "#f9f4ed"
-secondaryBackgroundColor = "#eee7db"
-textColor = "#201e1d"
-linkColor = "#8c491a"
+# ---- Colours ----
+primaryColor = "#c67139"             # terracotta — buttons, links, focus, alerts
+backgroundColor = "#f9f4ed"          # main surface (the design's card colour)
+secondaryBackgroundColor = "#eee7db" # widget + card fills, page ground
+textColor = "#201e1d"                # warm near-black
+linkColor = "#8c491a"                # deep terracotta — passes contrast for body-size text
+
+# ---- Typography ----
 font = "Nunito:https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap, sans-serif"
 headingFont = "Nunito:https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap, sans-serif"
 baseFontSize = 15
 baseFontWeight = 400
+
+# ---- Shape & borders ----
 baseRadius = "large"
 buttonRadius = "full"
 borderColor = "#dcd3c4"
 showWidgetBorder = true
 showSidebarBorder = false
 
+# ---- Sidebar ----
 [theme.sidebar]
 backgroundColor = "#f9f4ed"
 secondaryBackgroundColor = "#eee7db"
