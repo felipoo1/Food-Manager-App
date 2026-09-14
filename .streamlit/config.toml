@@ -1,34 +1,24 @@
-# Cafe Manager — Theme: "Soft Friendly"
-# This file controls the entire visual style of the app: colors, fonts,
-# corner roundness, and borders. Streamlit reads this automatically —
-# there is no separate "settings page" to click through.
-
 [theme]
-# ---- Colors ----
-primaryColor = "#FF8C73"             # Accent color (buttons, links, focus) — soft coral
-backgroundColor = "#FFF8F0"          # Main app background — warm cream
-secondaryBackgroundColor = "#FDEAD7" # Cards & widget backgrounds — soft peach
-textColor = "#4A3F35"                # Body text — warm charcoal-brown, not harsh black
-linkColor = "#FF8C73"
-
-# ---- Typography ----
-# Nunito is a genuinely rounded, friendly typeface (not just Streamlit's
-# default Source Sans) — this is what gives the "soft friendly" feel its
-# warmth. Falls back to a generic sans-serif if the font fails to load.
-font = "Nunito:https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,200..1000;1,200..1000, sans-serif"
-headingFont = "Nunito:https://fonts.googleapis.com/css2?family=Nunito:ital,wght@0,200..1000;1,200..1000, sans-serif"
-baseFontSize = 16
-baseFontWeight = 500                 # Slightly bolder than default — feels warmer, less thin/corporate
-
-# ---- Shape & borders ----
-baseRadius = "large"        # Generously rounded corners on cards, inputs, dataframes
-buttonRadius = "full"       # Fully pill-shaped buttons — the friendliest, most "tappable" look
-borderColor = "#F5DCC8"     # Soft pastel border color
+primaryColor = "#c67139"
+backgroundColor = "#f9f4ed"
+secondaryBackgroundColor = "#eee7db"
+textColor = "#201e1d"
+linkColor = "#8c491a"
+font = "Nunito:https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "Nunito:https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap, sans-serif"
+baseFontSize = 15
+baseFontWeight = 400
+baseRadius = "large"
+buttonRadius = "full"
+borderColor = "#dcd3c4"
 showWidgetBorder = true
-showSidebarBorder = true
+showSidebarBorder = false
 
-# ---- Sidebar (now matching the main theme, fully cohesive) ----
 [theme.sidebar]
-backgroundColor = "#FDEAD7"   # Soft peach, same family as the main cards
-textColor = "#4A3F35"         # Same warm charcoal as main text
-borderColor = "#F5DCC8"
+backgroundColor = "#f9f4ed"
+secondaryBackgroundColor = "#eee7db"
+textColor = "#201e1d"
+borderColor = "#dcd3c4"
+
+[client]
+toolbarMode = "minimal"
