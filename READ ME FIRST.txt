@@ -1,0 +1,37 @@
+TPC Command Centre — files to upload
+====================================
+
+1. app.py
+   Goes at the REPO ROOT, replacing the existing app.py.
+   The only change: the old "Option B: Clean Modern" CSS block
+   (lines 453-547, which hardcoded Inter + a white sidebar with
+   !important and overrode the theme) has been removed and replaced
+   with two lines that call inject_theme(). Nothing else was touched.
+
+2. theme_css.py
+   Goes at the REPO ROOT, next to app.py. Replace the copy already
+   there. Every rule is !important so it cannot be overridden.
+
+3. config.toml
+   Goes in the .streamlit/ FOLDER, as .streamlit/config.toml.
+   You have already done this one - only re-upload if it looks wrong.
+
+How to upload on github.com
+---------------------------
+Repo root -> "Add file" -> "Upload files" -> drag in app.py and
+theme_css.py -> "Commit changes" -> Commit directly to main.
+Uploading a file with the same name replaces it.
+
+Then: tpcafe-app.streamlit.app -> Manage app -> the three dots ->
+Reboot app -> hard refresh with Cmd-Shift-R.
+
+What to expect
+--------------
+Sand/stone surfaces, terracotta primary buttons, Nunito headings,
+pill buttons and inputs, rounded cards, round tick-boxes, tighter
+density.
+
+Streamlit still owns the page structure, so the task board will not
+become the seven side-by-side day cards from the design, and the
+sidebar will not become the collapsible rail. Those are layout, not
+styling - see HANDOFF.md, route 2.

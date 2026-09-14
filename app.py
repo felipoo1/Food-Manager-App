@@ -450,101 +450,12 @@ if st.session_state.current_user is None:
 current_user = st.session_state.current_user
 is_owner = current_user["role"] == "owner"
 
-# ---------- Global styling — Option B: Clean Modern ----------
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-/* Sidebar: clean white, left-aligned nav */
-[data-testid="stSidebar"] {
-    border-right: 1px solid #E2E8F0 !important;
-}
-[data-testid="stSidebar"] button {
-    justify-content: flex-start !important;
-    border-radius: 6px !important;
-    padding: 6px 12px !important;
-    transition: background 0.15s;
-}
-[data-testid="stSidebar"] button:hover {
-    background: #F8FAFC !important;
-}
-[data-testid="stSidebar"] button div {
-    justify-content: flex-start !important;
-    text-align: left !important;
-}
-[data-testid="stSidebar"] button p {
-    text-align: left !important;
-    font-size: 0.92rem !important;
-    font-weight: 500 !important;
-    color: #475569 !important;
-}
-
-/* Active page — orange left accent bar */
-[data-testid="stSidebar"] .stMarkdown p {
-    font-size: 0.92rem !important;
-    font-weight: 700 !important;
-    color: #F26419 !important;
-    border-left: 3px solid #F26419;
-    padding-left: 10px;
-    margin-left: -1px;
-}
-
-/* Section labels in sidebar */
-[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
-    font-size: 0.7rem !important;
-    font-weight: 600 !important;
-    letter-spacing: 0.06em !important;
-    text-transform: uppercase !important;
-    color: #94A3B8 !important;
-    border-left: none !important;
-    padding-left: 0 !important;
-}
-
-/* Sidebar bottom buttons (notifications, PIN, logout) */
-[data-testid="stSidebar"] .stButton > button {
-    color: #64748B !important;
-    font-size: 0.85rem !important;
-    font-weight: 400 !important;
-}
-
-/* Main content: generous headings */
-h1 { font-size: 1.7rem !important; font-weight: 700 !important; color: #1E293B !important; }
-h2 { font-size: 1.25rem !important; font-weight: 600 !important; color: #1E293B !important; }
-h3 { font-size: 1.05rem !important; font-weight: 600 !important; color: #1E293B !important; }
-
-/* Captions — muted not invisible */
-[data-testid="stCaptionContainer"] p { color: #64748B !important; font-size: 0.82rem !important; }
-
-/* Primary buttons — solid orange */
-[data-testid="stBaseButton-primary"] {
-    background: #F26419 !important;
-    border: none !important;
-    color: #FFFFFF !important;
-    font-weight: 600 !important;
-    font-size: 0.88rem !important;
-}
-[data-testid="stBaseButton-primary"]:hover {
-    background: #D95410 !important;
-}
-
-/* Containers — white cards with clean border */
-[data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"] {
-    border: 1px solid #E2E8F0 !important;
-    border-radius: 10px !important;
-    background: #FFFFFF !important;
-}
-
-/* Metric cards */
-[data-testid="stMetric"] {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 10px;
-    padding: 14px !important;
-}
-[data-testid="stMetricValue"] { font-size: 1.6rem !important; font-weight: 700 !important; color: #1E293B !important; }
-[data-testid="stMetricLabel"] { font-size: 0.75rem !important; font-weight: 600 !important; color: #64748B !important; text-transform: uppercase; letter-spacing: 0.05em; }
-</style>
-""", unsafe_allow_html=True)
+# ---------- Global styling — TPC Command Centre theme ----------
+# Palette, type, pill nav, cards, tables and tick-boxes live in theme_css.py
+# and in .streamlit/config.toml. Do not add page-level <style> blocks here —
+# they fight the theme.
+from theme_css import inject_theme
+inject_theme()
 
 # ---------- Sidebar navigation (flat text-style links) ----------
 st.sidebar.markdown("##### ☕ Cafe Manager")
