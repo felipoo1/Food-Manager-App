@@ -28,9 +28,13 @@ _CSS = f"""
 h1, h2, h3, h4, h5 {{
   font-family: 'Nunito', system-ui, sans-serif !important;
   font-weight: 700 !important; letter-spacing: -0.015em !important;
-  line-height: 1.12 !important;
+  /* 1.12 clipped the descenders on "Weekly task workspace" */
+  line-height: 1.25 !important;
 }}
-h1 {{ font-size: 2.05rem !important; margin: 0 0 0.6rem !important; padding: 0 !important; }}
+h1 {{
+  font-size: 2.05rem !important; margin: 0 0 0.6rem !important;
+  padding: 0 0 0.05em !important; overflow: visible !important;
+}}
 h2 {{ font-size: 1.45rem !important; margin: 0.2rem 0 0.4rem !important; }}
 h3 {{ font-size: 1.15rem !important; margin: 0.2rem 0 0.3rem !important; }}
 
@@ -51,18 +55,15 @@ hr {{ margin: 0.8rem 0 !important; border-color: {N300} !important; }}
   background: {N100} !important; border-right: 0 !important;
 }}
 [data-testid="stSidebarUserContent"] {{
-  padding: 1.1rem 0.9rem 1.5rem !important;
+  padding: 1.1rem 0.7rem 1.5rem !important;
 }}
 [data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"] {{
   gap: 0.1rem !important;
 }}
-[data-testid="stSidebar"] h5 {{
-  font-size: 1rem !important; margin: 0 0 0.1rem 0.5rem !important;
-}}
+[data-testid="stSidebar"] [data-testid="stMarkdown"] {{ margin: 0 !important; }}
 [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {{
-  font-size: 0.68rem !important; letter-spacing: 0.08em !important;
-  text-transform: uppercase !important; color: {N600} !important;
-  margin: 0 0 0.5rem 0.55rem !important;
+  font-size: 0.7rem !important; color: {N600} !important;
+  margin: 0 0 0.3rem 0.75rem !important;
 }}
 
 /* every sidebar button: flat, left-aligned, pill, tight */
@@ -71,23 +72,42 @@ hr {{ margin: 0.8rem 0 !important; border-color: {N300} !important; }}
   justify-content: flex-start !important;
   text-align: left !important;
   gap: 0.6rem !important;
-  padding: 0.42rem 0.75rem !important;
+  padding: 0.38rem 0.75rem !important;
   min-height: 0 !important;
   border: 0 !important; border-radius: 999px !important;
   background: transparent !important;
   color: {INK} !important;
   font-family: 'Nunito', system-ui, sans-serif !important;
-  font-size: 0.9rem !important; font-weight: 500 !important;
-  line-height: 1.25 !important;
+  font-size: 0.845rem !important; font-weight: 500 !important;
+  line-height: 1.2 !important;
   box-shadow: none !important;
 }}
+/* Streamlit nests the icon + label in a div inside the button and centres
+   THAT, so left-aligning the button alone does nothing. Push the inner
+   wrapper full width and shove its contents left. */
+[data-testid="stSidebar"] button > div,
+[data-testid="stSidebar"] button > span,
+[data-testid="stSidebar"] button [data-testid="stMarkdownContainer"] {{
+  width: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 0.6rem !important;
+  text-align: left !important;
+  margin-right: auto !important;
+}}
 [data-testid="stSidebar"] button p {{
-  font-size: 0.9rem !important; font-weight: 500 !important;
+  font-size: 0.845rem !important; font-weight: 500 !important;
   text-align: left !important; margin: 0 !important;
+  margin-right: auto !important;
 }}
 [data-testid="stSidebar"] button [data-testid="stIconMaterial"],
 [data-testid="stSidebar"] button span[class*="material"] {{
-  font-size: 1.05rem !important; color: {N600} !important;
+  font-size: 0.95rem !important; color: {N500} !important;
+  flex: none !important;
+}}
+[data-testid="stSidebar"] button:disabled [data-testid="stIconMaterial"] {{
+  color: {N300} !important;
 }}
 [data-testid="stSidebar"] button:hover {{ background: {N200} !important; }}
 [data-testid="stSidebar"] button:active {{ background: {N300} !important; }}
@@ -123,6 +143,12 @@ hr {{ margin: 0.8rem 0 !important; border-color: {N300} !important; }}
 }}
 [data-testid="stBaseButton-secondary"]:hover {{
   background: {N200} !important; border-color: {N400} !important;
+}}
+
+/* lone action buttons at the top of a page: stop them stretching to the
+   full column width, which reads as a banner rather than a button */
+[data-testid="stMainBlockContainer"] [data-testid="stBaseButton-primary"] {{
+  max-width: 220px !important; margin-left: auto !important;
 }}
 
 /* ── inputs ────────────────────────────────────────────────── */

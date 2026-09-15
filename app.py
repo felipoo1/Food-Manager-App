@@ -458,18 +458,33 @@ from theme_css import inject_theme
 inject_theme()
 
 # ---------- Sidebar navigation (flat text-style links) ----------
-st.sidebar.markdown("##### ☕ Cafe Manager")
-st.sidebar.caption(f"Logged in as **{current_user['name']}** ({current_user['role']})")
-st.sidebar.write("")
+_initials = "".join(p[0] for p in current_user["name"].split()[:2]).upper()
+st.sidebar.markdown(
+    f"""<div style="display:flex;align-items:center;gap:10px;padding:0 4px 12px">
+      <div style="flex:none;width:40px;height:40px;border-radius:999px;background:#474238;
+                  color:#f9f4ed;display:grid;place-items:center;font-family:Nunito,sans-serif;
+                  font-weight:700;font-size:13px;letter-spacing:0.02em">TPC</div>
+      <div style="min-width:0;line-height:1.15">
+        <div style="font-family:Nunito,sans-serif;font-weight:700;font-size:16px;color:#201e1d">Command Centre</div>
+        <div style="font-size:11.5px;color:#82796a">The Tea Party Cafe</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 12px 6px 6px;margin:0 0 14px;
+                background:#eee7db;border-radius:999px">
+      <span style="flex:none;width:28px;height:28px;border-radius:999px;background:#dcd3c4;
+                   display:grid;place-items:center;font-size:11px;font-weight:700;color:#474238">{_initials}</span>
+      <span style="font-size:12.5px;color:#474238;white-space:nowrap;overflow:hidden;
+                   text-overflow:ellipsis">{current_user['name'].split()[0]} · {current_user['role'].title()}</span>
+    </div>""",
+    unsafe_allow_html=True,
+)
 
-nav_options = ["Tasks", "Stock Take", "Master Stock List", "Recipes", "Suppliers", "Orders", "Group Dining"]
+DAILY_PAGES = ["Tasks", "Stock Take", "Master Stock List", "Recipes", "Suppliers", "Orders", "Group Dining"]
+OWNER_TOOL_PAGES = ["Task History", "Invoices", "Staff", "Sales Sync", "Import Costing Sheet", "Data Export"]
+
+nav_options = list(DAILY_PAGES)
 if is_owner:
-    nav_options.append("Task History")
-    nav_options.append("Invoices")
-    nav_options.append("Staff")
-    nav_options.append("Sales Sync")
-    nav_options.append("Import Costing Sheet")
-    nav_options.append("Data Export")
+    nav_options += OWNER_TOOL_PAGES
 
 if "current_page" not in st.session_state:
     st.session_state.current_page = nav_options[0]
@@ -492,7 +507,18 @@ NAV_ICONS = {
     "Data Export": ":material/download:",
 }
 
-for option in nav_options:
+def _nav_group(options, heading=None):
+    if heading:
+        st.sidebar.markdown(
+            f'<div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;'
+            f'color:#82796a;padding:14px 12px 4px">{heading}</div>',
+            unsafe_allow_html=True,
+        )
+    for option in options:
+        _nav_item(option)
+
+
+def _nav_item(option):
     icon = NAV_ICONS.get(option, ":material/circle:")
     if option == st.session_state.current_page:
         # Rendered as a disabled button so theme_css can give it the solid
@@ -503,6 +529,11 @@ for option in nav_options:
         if st.sidebar.button(option, icon=icon, type="tertiary", width="stretch", key=f"nav_{option}"):
             st.session_state.current_page = option
             st.rerun()
+
+
+_nav_group(DAILY_PAGES, "Daily running")
+if is_owner:
+    _nav_group(OWNER_TOOL_PAGES, "Owner tools")
 
 page = st.session_state.current_page
 

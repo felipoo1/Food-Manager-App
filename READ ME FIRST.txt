@@ -1,32 +1,30 @@
-Upload BOTH of these to the repo root, replacing what is there:
+Upload BOTH files to the repo root, replacing what is there:
 
   app.py
   theme_css.py
 
-Then reboot the app and hard-refresh (Cmd-Shift-R).
+Then reboot and hard-refresh (Cmd-Shift-R).
 
-WHAT THIS FIXES
----------------
-The theme WAS already working - cream page, sand sidebar, terracotta
-button. These were the things still making it look wrong:
+WHAT CHANGED - the sidebar now actually matches the mock
+--------------------------------------------------------
+app.py:
+  * Brand block: the dark "TPC" circle with "Command Centre" and
+    "The Tea Party Cafe" beneath it, replacing "### Cafe Manager".
+  * User chip: a sand pill with the staff member's initials and
+    "Priya . Owner", replacing the uppercase "LOGGED IN AS" caption.
+  * The nav is now split into two labelled groups - "Daily running"
+    and "Owner tools" - as in the mock, instead of one long list.
 
-1. Sidebar nav was centred with big gaps between items.
-   Cause: the CSS targeted ".stButton", a class Streamlit 1.63 no
-   longer emits. Rewritten against the current data-testid hooks, so
-   nav items are now left-aligned, tight, and pill-shaped.
+theme_css.py:
+  * Nav rows tightened: smaller text (0.845rem), less padding, and
+    the Material icons shrunk and muted so the label leads the row
+    rather than the icon.
+  * Active page icon lightened so it reads on the dark pill.
 
-2. The active page was plain orange markdown text, not a pill.
-   app.py now renders it as a disabled button, which the CSS paints
-   as the solid dark pill from the mock.
-
-3. Recipe placeholder tiles were hardcoded blue / orange / purple
-   (#2563EB, #F2722D, #7C3AED) and clashed with the cream. Now sand,
-   with a 16px radius.
-
-4. The build stamp line has been removed.
-
-STILL NOT FIXED (needs layout work, not styling)
-------------------------------------------------
-Cards are still one-per-row rather than side by side, because
-Streamlit stacks everything vertically. That is the st.columns()
-work - ask for it and I will do the Tasks and Recipes pages first.
+WHAT STILL DIFFERS FROM THE MOCK
+--------------------------------
+The mock uses small dots instead of icons, and shows counts like
+"6 open" beside Tasks. Both are doable - say the word. The bigger
+remaining gap is the Tasks page: seven full-width day cards stacked
+vertically, where the mock has a compact grid. That is a layout
+change in app.py, not styling.
