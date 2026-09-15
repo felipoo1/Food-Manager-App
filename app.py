@@ -454,7 +454,7 @@ is_owner = current_user["role"] == "owner"
 # Palette, type, pill nav, cards, tables and tick-boxes live in theme_css.py
 # and in .streamlit/config.toml. Do not add page-level <style> blocks here —
 # they fight the theme.
-from theme_css import inject_theme
+from theme_css import inject_theme, tag
 inject_theme()
 
 # ---------- Sidebar navigation (flat text-style links) ----------
@@ -510,8 +510,9 @@ NAV_ICONS = {
 def _nav_group(options, heading=None):
     if heading:
         st.sidebar.markdown(
-            f'<div style="font-size:10px;letter-spacing:0.1em;text-transform:uppercase;'
-            f'color:#82796a;padding:14px 12px 4px">{heading}</div>',
+            f'<div style="display:block;font-size:10px;letter-spacing:0.1em;'
+            f'text-transform:uppercase;color:#82796a;line-height:2.4;'
+            f'margin:10px 0 2px;padding-left:12px">{heading}</div>',
             unsafe_allow_html=True,
         )
     for option in options:
@@ -689,100 +690,106 @@ if page == "Tasks":
         if "pending_pin_task" not in st.session_state:
             st.session_state.pending_pin_task = None  # holds a unique key like "12-pending" while awaiting PIN
 
-        for day in DAYS:
-            day_tasks = [t for t in all_task_defs if t["day_of_week"] == day]
-            with st.container(border=True):
-                st.subheader(day)
-                if not day_tasks:
-                    st.caption("No tasks assigned to this day.")
-                for section in ["Kitchen", "Floor"]:
-                    section_tasks = [t for t in day_tasks if t["section"] == section]
-                    if not section_tasks:
-                        continue
-                    st.markdown(f"**{section}**")
+        # Days laid out in a grid, two per row, so the week reads across
+        # rather than as one long scroll (matches the design mock).
+        DAYS_PER_ROW = 2
+        for _d in range(0, len(DAYS), DAYS_PER_ROW):
+            _day_cols = st.columns(DAYS_PER_ROW)
+            for _day_col, day in zip(_day_cols, DAYS[_d:_d + DAYS_PER_ROW]):
+                with _day_col:
+                    day_tasks = [t for t in all_task_defs if t["day_of_week"] == day]
+                    with st.container(border=True):
+                        st.subheader(day)
+                        if not day_tasks:
+                            st.caption("No tasks assigned to this day.")
+                        for section in ["Kitchen", "Floor"]:
+                            section_tasks = [t for t in day_tasks if t["section"] == section]
+                            if not section_tasks:
+                                continue
+                            st.markdown(f"**{section}**")
 
-                    conn = db.get_connection()
-                    for t in section_tasks:
-                        pending_key = f"{t['id']}-pending"
-                        is_done, completed_by, completed_at, log_id = completions[t["id"]]
+                            conn = db.get_connection()
+                            for t in section_tasks:
+                                pending_key = f"{t['id']}-pending"
+                                is_done, completed_by, completed_at, log_id = completions[t["id"]]
 
-                        with st.container(border=True):
-                            row_cols = st.columns([5, 2])
-                            with row_cols[0]:
-                                title_col, badge_col = st.columns([5, 2])
-                                with title_col:
-                                    if is_owner:
-                                        if st.button(t["title"], type="tertiary", key=f"task_title_{t['id']}"):
-                                            st.session_state["edit_task_select"] = f"[{t['day_of_week']} / {t['section']}] {t['title']}"
-                                            st.session_state.task_mode = "edit"
-                                            st.rerun()
-                                    else:
-                                        st.write(t["title"])
-                                with badge_col:
-                                    if t["recurrence"] == "once":
-                                        st.badge(f"One-off: {t['specific_date']}", color="gray")
-                                    else:
-                                        st.badge("Weekly", color="orange")
-                                if t["notes"]:
-                                    with st.expander("Task notes"):
-                                        st.write(t["notes"])
-
-                                # Show any staff note left when completing this task
-                                if is_done:
-                                    existing_note = conn.execute(
-                                        "SELECT completion_note FROM task_log WHERE id = ?", (log_id,)
-                                    ).fetchone()
-                                    if existing_note and existing_note["completion_note"]:
-                                        st.info(f"💬 {completed_by}: {existing_note['completion_note']}")
-
-                            with row_cols[1]:
-                                if is_done:
-                                    st.success(f"✅ {completed_by} at {completed_at}")
-                                    if st.button("Undo", key=f"undo_{t['id']}"):
-                                        conn.execute(
-                                            "UPDATE task_log SET reverted=1, reverted_by=?, reverted_at=? WHERE id=?",
-                                            (current_user["name"], datetime.now().strftime("%-I:%M %p"), log_id)
-                                        )
-                                        conn.commit()
-                                        st.rerun()
-                                elif st.session_state.pending_pin_task == pending_key:
-                                    pin_try = pin_entry_boxes(f"task_pin_{t['id']}")
-                                    # Optional note field — staff can leave a message for colleagues
-                                    task_note = st.text_input(
-                                        "Leave a note (optional)",
-                                        placeholder="e.g. Done but fridge needs restocking...",
-                                        key=f"task_note_{t['id']}"
-                                    )
-                                    confirm_col, cancel_col = st.columns(2)
-                                    with confirm_col:
-                                        if st.button("Confirm", key=f"confirm_{t['id']}"):
-                                            if len(pin_try) < 4 or not pin_try.isdigit():
-                                                st.error("Please fill in all 4 digits.")
+                                with st.container(border=True):
+                                    row_cols = st.columns([5, 2])
+                                    with row_cols[0]:
+                                        title_col, badge_col = st.columns([5, 2])
+                                        with title_col:
+                                            if is_owner:
+                                                if st.button(t["title"], type="tertiary", key=f"task_title_{t['id']}"):
+                                                    st.session_state["edit_task_select"] = f"[{t['day_of_week']} / {t['section']}] {t['title']}"
+                                                    st.session_state.task_mode = "edit"
+                                                    st.rerun()
                                             else:
-                                                staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_try,)).fetchone()
-                                                if staff_match is None:
-                                                    st.error("PIN not recognized.")
-                                                    clear_pin_boxes(f"task_pin_{t['id']}")
-                                                else:
-                                                    week_val = db.get_week_start() if t["recurrence"] == "weekly" else None
-                                                    note_val = st.session_state.get(f"task_note_{t['id']}", "").strip() or None
-                                                    conn.execute(
-                                                        "INSERT INTO task_log (task_id, week_start_date, completed_by, completed_at, completion_note) VALUES (?, ?, ?, ?, ?)",
-                                                        (t["id"], week_val, staff_match["name"], datetime.now().strftime("%-I:%M %p"), note_val)
-                                                    )
-                                                    conn.commit()
+                                                st.write(t["title"])
+                                        with badge_col:
+                                            if t["recurrence"] == "once":
+                                                st.badge(f"One-off: {t['specific_date']}", color="gray")
+                                            else:
+                                                st.badge("Weekly", color="orange")
+                                        if t["notes"]:
+                                            with st.expander("Task notes"):
+                                                st.write(t["notes"])
+
+                                        # Show any staff note left when completing this task
+                                        if is_done:
+                                            existing_note = conn.execute(
+                                                "SELECT completion_note FROM task_log WHERE id = ?", (log_id,)
+                                            ).fetchone()
+                                            if existing_note and existing_note["completion_note"]:
+                                                st.info(f"💬 {completed_by}: {existing_note['completion_note']}")
+
+                                    with row_cols[1]:
+                                        if is_done:
+                                            st.success(f"✅ {completed_by} at {completed_at}")
+                                            if st.button("Undo", key=f"undo_{t['id']}"):
+                                                conn.execute(
+                                                    "UPDATE task_log SET reverted=1, reverted_by=?, reverted_at=? WHERE id=?",
+                                                    (current_user["name"], datetime.now().strftime("%-I:%M %p"), log_id)
+                                                )
+                                                conn.commit()
+                                                st.rerun()
+                                        elif st.session_state.pending_pin_task == pending_key:
+                                            pin_try = pin_entry_boxes(f"task_pin_{t['id']}")
+                                            # Optional note field — staff can leave a message for colleagues
+                                            task_note = st.text_input(
+                                                "Leave a note (optional)",
+                                                placeholder="e.g. Done but fridge needs restocking...",
+                                                key=f"task_note_{t['id']}"
+                                            )
+                                            confirm_col, cancel_col = st.columns(2)
+                                            with confirm_col:
+                                                if st.button("Confirm", key=f"confirm_{t['id']}"):
+                                                    if len(pin_try) < 4 or not pin_try.isdigit():
+                                                        st.error("Please fill in all 4 digits.")
+                                                    else:
+                                                        staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_try,)).fetchone()
+                                                        if staff_match is None:
+                                                            st.error("PIN not recognized.")
+                                                            clear_pin_boxes(f"task_pin_{t['id']}")
+                                                        else:
+                                                            week_val = db.get_week_start() if t["recurrence"] == "weekly" else None
+                                                            note_val = st.session_state.get(f"task_note_{t['id']}", "").strip() or None
+                                                            conn.execute(
+                                                                "INSERT INTO task_log (task_id, week_start_date, completed_by, completed_at, completion_note) VALUES (?, ?, ?, ?, ?)",
+                                                                (t["id"], week_val, staff_match["name"], datetime.now().strftime("%-I:%M %p"), note_val)
+                                                            )
+                                                            conn.commit()
+                                                            st.session_state.pending_pin_task = None
+                                                            st.rerun()
+                                            with cancel_col:
+                                                if st.button("Cancel", key=f"cancel_{t['id']}"):
                                                     st.session_state.pending_pin_task = None
                                                     st.rerun()
-                                    with cancel_col:
-                                        if st.button("Cancel", key=f"cancel_{t['id']}"):
-                                            st.session_state.pending_pin_task = None
-                                            st.rerun()
-                                else:
-                                    if st.button("Mark complete", key=f"complete_{t['id']}"):
-                                        st.session_state.pending_pin_task = pending_key
-                                        st.rerun()
-                    conn.close()
-            st.write("")
+                                        else:
+                                            if st.button("Mark complete", key=f"complete_{t['id']}"):
+                                                st.session_state.pending_pin_task = pending_key
+                                                st.rerun()
+                            conn.close()
+                    st.write("")
 
     # ---------------- ADD VIEW (owner only) ----------------
     elif st.session_state.task_mode == "add":
@@ -1081,27 +1088,42 @@ if page == "Master Stock List":
                 st.subheader(cat)
                 cat_rows = [r for r in ingredients if (r["category"] or "Uncategorised") == cat]
 
-                for r in cat_rows:
-                    cost = db.cost_per_recipe_unit(r)
-                    with st.container(border=True):
-                        cols = st.columns([2, 2, 3, 3])
-                        with cols[0]:
-                            if st.button(r["name"], type="tertiary", key=f"ing_name_{r['id']}"):
-                                st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
-                                st.session_state.stock_mode = "edit"
-                                st.rerun()
-                        cols[1].write(f"**Supplier:** {r['primary_supplier_name'] or '-'}")
-                        cols[2].write(f"**You pay:** ${r['purchase_price']:.2f} for {r['purchase_size_label']}")
-                        cols[3].write(f"**Recipes use it in:** {r['recipe_unit_qty']:g}{r['base_unit']} portions, costing ${cost:.3f} each")
+                # Cards in a wrapping grid rather than one full-width row per
+                # ingredient — four per row, matching the design mock.
+                CARDS_PER_ROW = 4
+                for i in range(0, len(cat_rows), CARDS_PER_ROW):
+                    row_cols = st.columns(CARDS_PER_ROW)
+                    for col, r in zip(row_cols, cat_rows[i:i + CARDS_PER_ROW]):
+                        cost = db.cost_per_recipe_unit(r)
+                        with col:
+                            with st.container(border=True):
+                                stock_chip = ""
+                                if r["current_stock_qty"] is not None:
+                                    display_unit, factor = db.get_order_unit(r["base_unit"])
+                                    stock_display = r["current_stock_qty"] / factor
+                                    is_low = (r["min_stock_qty"] is not None
+                                              and r["current_stock_qty"] < r["min_stock_qty"])
+                                    stock_chip = tag(f"{stock_display:g} {display_unit}",
+                                                     "alert" if is_low else "neutral")
 
-                        if r["current_stock_qty"] is not None:
-                            display_unit, factor = db.get_order_unit(r["base_unit"])
-                            stock_display = r["current_stock_qty"] / factor
-                            is_low = r["min_stock_qty"] is not None and r["current_stock_qty"] < r["min_stock_qty"]
-                            if is_low:
-                                st.error(f"🔴 Low stock: {stock_display:g} {display_unit} on hand (alert set below {r['min_stock_qty'] / factor:g} {display_unit})")
-                            else:
-                                st.caption(f"📦 Current stock: {stock_display:g} {display_unit} on hand")
+                                st.markdown(
+                                    f"""<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px">
+                                      <div style="flex:1;min-width:0;font-family:Nunito,sans-serif;font-weight:700;
+                                                  font-size:15px;line-height:1.25;color:#201e1d">{r['name']}</div>
+                                      {stock_chip}
+                                    </div>
+                                    <div style="font-size:12px;color:#645c50;line-height:1.35">
+                                      {r['purchase_size_label']} · ${r['purchase_price']:.2f}</div>
+                                    <div style="font-size:12.5px;font-weight:700;color:#201e1d;margin-top:2px">
+                                      ${cost:.3f} / {r['recipe_unit_qty']:g}{r['base_unit']}</div>
+                                    <div style="font-size:11px;color:#82796a;margin-top:3px">
+                                      {r['primary_supplier_name'] or 'No supplier set'}</div>""",
+                                    unsafe_allow_html=True,
+                                )
+                                if st.button("Edit", type="tertiary", key=f"ing_name_{r['id']}"):
+                                    st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
+                                    st.session_state.stock_mode = "edit"
+                                    st.rerun()
             st.caption("(Updated dates shown on the ingredient's own page.)")
 
     # ---------------- ADD VIEW ----------------

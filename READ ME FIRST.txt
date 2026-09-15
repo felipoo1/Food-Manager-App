@@ -1,30 +1,28 @@
-Upload BOTH files to the repo root, replacing what is there:
+Upload BOTH to the repo root, replacing what is there:
 
   app.py
   theme_css.py
 
 Then reboot and hard-refresh (Cmd-Shift-R).
 
-WHAT CHANGED - the sidebar now actually matches the mock
---------------------------------------------------------
-app.py:
-  * Brand block: the dark "TPC" circle with "Command Centre" and
-    "The Tea Party Cafe" beneath it, replacing "### Cafe Manager".
-  * User chip: a sand pill with the staff member's initials and
-    "Priya . Owner", replacing the uppercase "LOGGED IN AS" caption.
-  * The nav is now split into two labelled groups - "Daily running"
-    and "Owner tools" - as in the mock, instead of one long list.
+WHAT CHANGED
+------------
+1. RIGHT SIDE NO LONGER STACKS.
+   * Master Stock List: was one full-width row per ingredient. Now a
+     4-across card grid - name, on-hand chip, pack/price, cost per
+     recipe unit, supplier - the same card as the mock.
+   * Tasks: the seven days were seven full-width cards stacked down
+     the page. Now two per row, so the week reads across.
 
-theme_css.py:
-  * Nav rows tightened: smaller text (0.845rem), less padding, and
-    the Material icons shrunk and muted so the label leads the row
-    rather than the icon.
-  * Active page icon lightened so it reads on the dark pill.
+2. SIDEBAR SUB-HEADINGS NO LONGER COVERED.
+   "DAILY RUNNING" and "OWNER TOOLS" had padding but no real height,
+   so the nav pill below rode up over the text. They now have an
+   explicit line-height and a minimum block height.
 
-WHAT STILL DIFFERS FROM THE MOCK
---------------------------------
-The mock uses small dots instead of icons, and shows counts like
-"6 open" beside Tasks. Both are doable - say the word. The bigger
-remaining gap is the Tasks page: seven full-width day cards stacked
-vertically, where the mock has a compact grid. That is a layout
-change in app.py, not styling.
+3. SIZE AND FONT CLOSER TO THE MOCK.
+   Body copy 0.92rem and captions 0.83rem (Streamlit's defaults ran
+   noticeably larger), h3 down to 1.05rem, cards on sand with an 18px
+   radius, nested cards in cream.
+
+4. The bright green completion notice is now the design system's sage,
+   which stops it fighting the warm palette.

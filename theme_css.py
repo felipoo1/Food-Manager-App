@@ -47,6 +47,32 @@ h3 {{ font-size: 1.15rem !important; margin: 0.2rem 0 0.3rem !important; }}
 [data-testid="stElementContainer"]:empty {{ display: none !important; }}
 hr {{ margin: 0.8rem 0 !important; border-color: {N300} !important; }}
 
+/* body copy: Streamlit's default runs larger than the mock */
+[data-testid="stMainBlockContainer"] [data-testid="stMarkdown"] p {{
+  font-size: 0.92rem !important; line-height: 1.45 !important;
+}}
+[data-testid="stMainBlockContainer"] [data-testid="stCaptionContainer"] p {{
+  font-size: 0.83rem !important; color: {N700} !important;
+}}
+[data-testid="stMainBlockContainer"] h3 {{ font-size: 1.05rem !important; }}
+
+/* day / category cards: sand fill and a softer radius, as in the mock */
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"] {{
+  background: {N200} !important; border: 0 !important;
+  border-radius: 18px !important;
+}}
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"]
+  [data-testid="stVerticalBlockBorderWrapper"] {{
+  background: {N100} !important; border-radius: 14px !important;
+}}
+
+/* completion notice: Streamlit's bright green fights the warm palette.
+   Sage is the design system's second accent. */
+[data-testid="stAlertContainer"], [data-testid="stNotificationContentSuccess"] {{
+  background: #e9ede1 !important; color: #3f4a2c !important;
+}}
+[data-testid="stAlertContainer"] p {{ color: #3f4a2c !important; }}
+
 /* ══ SIDEBAR ═══════════════════════════════════════════════
    The nav items are tertiary buttons at width="stretch". Streamlit
    centres those by default and spaces them generously — both undone
@@ -58,7 +84,12 @@ hr {{ margin: 0.8rem 0 !important; border-color: {N300} !important; }}
   padding: 1.1rem 0.7rem 1.5rem !important;
 }}
 [data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"] {{
-  gap: 0.1rem !important;
+  gap: 0.12rem !important;
+}}
+/* the group-heading markdown block needs its own height or the next nav
+   pill overlaps it */
+[data-testid="stSidebar"] [data-testid="stMarkdown"]:has(div[style*="uppercase"]) {{
+  min-height: 34px !important;
 }}
 [data-testid="stSidebar"] [data-testid="stMarkdown"] {{ margin: 0 !important; }}
 [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {{
