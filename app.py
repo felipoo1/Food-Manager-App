@@ -495,7 +495,10 @@ NAV_ICONS = {
 for option in nav_options:
     icon = NAV_ICONS.get(option, ":material/circle:")
     if option == st.session_state.current_page:
-        st.sidebar.markdown(f"{icon} **:orange[{option}]**")
+        # Rendered as a disabled button so theme_css can give it the solid
+        # active pill. Markdown here would not be stylable as a pill.
+        st.sidebar.button(option, icon=icon, type="tertiary", width="stretch",
+                          key=f"nav_{option}", disabled=True)
     else:
         if st.sidebar.button(option, icon=icon, type="tertiary", width="stretch", key=f"nav_{option}"):
             st.session_state.current_page = option
@@ -1326,7 +1329,7 @@ if page == "Master Stock List":
 # =========================================================
 elif page == "Recipes":
     TYPE_EMOJI = {"Prep": "🥣", "Dish": "🍽️", "Beverage": "🥤"}
-    TYPE_COLOR = {"Prep": "#2563EB", "Dish": "#F2722D", "Beverage": "#7C3AED"}
+    TYPE_COLOR = {"Prep": "#c0b6a5", "Dish": "#c0b6a5", "Beverage": "#c0b6a5"}
 
     def recipe_options(type_filter=None, category_filter=None, exclude_id=None):
         conn = db.get_connection()
@@ -1349,10 +1352,10 @@ elif page == "Recipes":
         if image_url:
             st.image(image_url, width="stretch")
         else:
-            color = TYPE_COLOR.get(rtype, "#999999")
+            color = TYPE_COLOR.get(rtype, "#c0b6a5")
             emoji = TYPE_EMOJI.get(rtype, "🍴")
             st.markdown(
-                f"""<div style="height:{height_px}px; border-radius: 0.5rem; background: {color}1A;
+                f"""<div style="height:{height_px}px; border-radius: 16px; background: {color}40;
                      display:flex; align-items:center; justify-content:center; margin-bottom: 0.5rem;
                      font-size: 48px;">{emoji}</div>""",
                 unsafe_allow_html=True

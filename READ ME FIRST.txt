@@ -1,37 +1,32 @@
-TPC Command Centre — files to upload
-====================================
+Upload BOTH of these to the repo root, replacing what is there:
 
-1. app.py
-   Goes at the REPO ROOT, replacing the existing app.py.
-   The only change: the old "Option B: Clean Modern" CSS block
-   (lines 453-547, which hardcoded Inter + a white sidebar with
-   !important and overrode the theme) has been removed and replaced
-   with two lines that call inject_theme(). Nothing else was touched.
+  app.py
+  theme_css.py
 
-2. theme_css.py
-   Goes at the REPO ROOT, next to app.py. Replace the copy already
-   there. Every rule is !important so it cannot be overridden.
+Then reboot the app and hard-refresh (Cmd-Shift-R).
 
-3. config.toml
-   Goes in the .streamlit/ FOLDER, as .streamlit/config.toml.
-   You have already done this one - only re-upload if it looks wrong.
+WHAT THIS FIXES
+---------------
+The theme WAS already working - cream page, sand sidebar, terracotta
+button. These were the things still making it look wrong:
 
-How to upload on github.com
----------------------------
-Repo root -> "Add file" -> "Upload files" -> drag in app.py and
-theme_css.py -> "Commit changes" -> Commit directly to main.
-Uploading a file with the same name replaces it.
+1. Sidebar nav was centred with big gaps between items.
+   Cause: the CSS targeted ".stButton", a class Streamlit 1.63 no
+   longer emits. Rewritten against the current data-testid hooks, so
+   nav items are now left-aligned, tight, and pill-shaped.
 
-Then: tpcafe-app.streamlit.app -> Manage app -> the three dots ->
-Reboot app -> hard refresh with Cmd-Shift-R.
+2. The active page was plain orange markdown text, not a pill.
+   app.py now renders it as a disabled button, which the CSS paints
+   as the solid dark pill from the mock.
 
-What to expect
---------------
-Sand/stone surfaces, terracotta primary buttons, Nunito headings,
-pill buttons and inputs, rounded cards, round tick-boxes, tighter
-density.
+3. Recipe placeholder tiles were hardcoded blue / orange / purple
+   (#2563EB, #F2722D, #7C3AED) and clashed with the cream. Now sand,
+   with a 16px radius.
 
-Streamlit still owns the page structure, so the task board will not
-become the seven side-by-side day cards from the design, and the
-sidebar will not become the collapsible rail. Those are layout, not
-styling - see HANDOFF.md, route 2.
+4. The build stamp line has been removed.
+
+STILL NOT FIXED (needs layout work, not styling)
+------------------------------------------------
+Cards are still one-per-row rather than side by side, because
+Streamlit stacks everything vertically. That is the st.columns()
+work - ask for it and I will do the Tasks and Recipes pages first.

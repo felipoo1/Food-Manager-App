@@ -1,149 +1,197 @@
 """
-theme_css.py — drop-in styling for the Cafe Manager Streamlit app.
+theme_css.py — Command Centre styling for the Cafe Manager Streamlit app.
 
-Gets the app the rest of the way to the TPC Command Centre design: pill
-sidebar nav with a solid active state, pill buttons, rounded inputs, card
-surfaces, themed dataframes, round tick-boxes and tighter density.
+Rewritten for Streamlit 1.63: targets the current data-testid hooks
+(stBaseButton-*, stSidebarUserContent, stElementContainer) rather than the
+legacy .stButton classes, which no longer exist and were why the sidebar nav
+stayed centred with large gaps.
 
-Usage — call it once, anywhere after st.set_page_config(...) in app.py.
-Every rule is !important, so it wins regardless of where it runs or what
-other st.markdown("<style>") blocks the app injects:
+Usage — call once, anywhere after st.set_page_config(...):
 
     from theme_css import inject_theme
     inject_theme()
 
-Pair it with the matching .streamlit/config.toml (colours, Nunito, radii).
-Streamlit's internal data-testid hooks can change between releases; if a rule
-stops biting after an upgrade, that selector is the thing to re-check.
+Pair with .streamlit/config.toml for palette, Nunito and radii.
 """
 
 import streamlit as st
 
-# Tokens — keep these in step with .streamlit/config.toml
 N100, N200, N300 = "#f9f4ed", "#eee7db", "#dcd3c4"
-N400, N600, N700, N800, N900 = "#c0b6a5", "#82796a", "#645c50", "#474238", "#2e2b25"
+N400, N500, N600 = "#c0b6a5", "#a29884", "#82796a"
+N700, N800, N900 = "#645c50", "#474238", "#2e2b25"
 INK = "#201e1d"
 ACCENT, ACCENT_100, ACCENT_700 = "#c67139", "#fff2eb", "#8c491a"
 
 _CSS = f"""
 <style>
-/* ── type ─────────────────────────────────────────────── */
-html, body, [class*="css"] {{ font-family: 'Nunito', system-ui, sans-serif !important; }}
-h1, h2, h3, h4 {{
+/* ── type ──────────────────────────────────────────────── */
+h1, h2, h3, h4, h5 {{
   font-family: 'Nunito', system-ui, sans-serif !important;
-  font-weight: 700 !important; letter-spacing: -0.01em !important; line-height: 1.15 !important;
+  font-weight: 700 !important; letter-spacing: -0.015em !important;
+  line-height: 1.12 !important;
 }}
-h1 {{ font-size: 2.1rem !important; margin-bottom: 0.15rem !important; }}
-h2 {{ font-size: 1.5rem !important; }}
-h3 {{ font-size: 1.2rem !important; }}
+h1 {{ font-size: 2.05rem !important; margin: 0 0 0.6rem !important; padding: 0 !important; }}
+h2 {{ font-size: 1.45rem !important; margin: 0.2rem 0 0.4rem !important; }}
+h3 {{ font-size: 1.15rem !important; margin: 0.2rem 0 0.3rem !important; }}
 
-/* ── density: tighter page gutters, less vertical air ─── */
-.block-container {{ padding: 1.6rem 1.8rem 4rem !important; max-width: 1180px !important; }}
-[data-testid="stVerticalBlock"] {{ gap: 0.65rem !important; }}
-[data-testid="stHorizontalBlock"] {{ gap: 0.6rem !important; }}
-hr {{ margin: 0.9rem 0 !important; border-color: {N300}; }}
+/* ── density: pull the page in, close the vertical gaps ── */
+.block-container {{
+  padding: 1.5rem 2rem 4rem !important; max-width: 1180px !important;
+}}
+[data-testid="stVerticalBlock"] {{ gap: 0.6rem !important; }}
+[data-testid="stHorizontalBlock"] {{ gap: 0.7rem !important; }}
+[data-testid="stElementContainer"]:empty {{ display: none !important; }}
+hr {{ margin: 0.8rem 0 !important; border-color: {N300} !important; }}
 
-/* ── sidebar nav: flat pills, solid active state ───────── */
+/* ══ SIDEBAR ═══════════════════════════════════════════════
+   The nav items are tertiary buttons at width="stretch". Streamlit
+   centres those by default and spaces them generously — both undone
+   here, and the active page (a disabled button) gets the solid pill. */
 [data-testid="stSidebar"] {{
-  border-right: 0 !important;
-  background: {N100} !important;
+  background: {N100} !important; border-right: 0 !important;
 }}
-[data-testid="stSidebar"] * {{ color: {INK}; }}
-[data-testid="stSidebar"] .stMarkdown p {{ color: {INK} !important; }}
-[data-testid="stSidebar"] > div:first-child {{ padding-top: 1.1rem !important; }}
-[data-testid="stSidebar"] .stButton > button {{
-  width: 100% !important; justify-content: flex-start !important; text-align: left !important;
-  padding: 0.5rem 0.85rem !important; border: 0 !important; border-radius: 999px !important;
-  background: transparent !important; color: {INK}; font-weight: 400 !important; font-size: 0.92rem !important;
-  box-shadow: none !important;
+[data-testid="stSidebarUserContent"] {{
+  padding: 1.1rem 0.9rem 1.5rem !important;
 }}
-[data-testid="stSidebar"] .stButton > button:hover {{ background: {N200}; color: {INK}; }}
-[data-testid="stSidebar"] .stButton > button:active {{ background: {N300}; }}
-/* the active page: render it as a disabled button, or wrap it in a div with
-   class "nav-active" — both pick up the solid pill below */
-[data-testid="stSidebar"] .stButton > button:disabled,
-[data-testid="stSidebar"] .nav-active .stButton > button {{
-  background: {N800} !important; color: {N100} !important;
-  font-weight: 700 !important; opacity: 1 !important;
+[data-testid="stSidebarUserContent"] [data-testid="stVerticalBlock"] {{
+  gap: 0.1rem !important;
+}}
+[data-testid="stSidebar"] h5 {{
+  font-size: 1rem !important; margin: 0 0 0.1rem 0.5rem !important;
 }}
 [data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {{
-  font-size: 0.62rem !important; letter-spacing: 0.1em !important; text-transform: uppercase !important;
-  color: {N600}; margin: 0.7rem 0 0.2rem 0.85rem !important;
+  font-size: 0.68rem !important; letter-spacing: 0.08em !important;
+  text-transform: uppercase !important; color: {N600} !important;
+  margin: 0 0 0.5rem 0.55rem !important;
 }}
 
-/* ── buttons ───────────────────────────────────────────── */
-.stButton > button, .stDownloadButton > button, .stFormSubmitButton > button {{
-  border-radius: 999px !important; font-weight: 600 !important; font-size: 0.92rem !important;
-  padding: 0.45rem 1.1rem !important; transition: background 120ms ease, border-color 120ms ease !important;
+/* every sidebar button: flat, left-aligned, pill, tight */
+[data-testid="stSidebar"] button {{
+  width: 100% !important;
+  justify-content: flex-start !important;
+  text-align: left !important;
+  gap: 0.6rem !important;
+  padding: 0.42rem 0.75rem !important;
+  min-height: 0 !important;
+  border: 0 !important; border-radius: 999px !important;
+  background: transparent !important;
+  color: {INK} !important;
+  font-family: 'Nunito', system-ui, sans-serif !important;
+  font-size: 0.9rem !important; font-weight: 500 !important;
+  line-height: 1.25 !important;
+  box-shadow: none !important;
 }}
-button[kind="primary"] {{ background: {ACCENT}; border-color: {ACCENT}; color: {N100}; }}
-button[kind="primary"]:hover {{ background: #b2622d !important; border-color: #b2622d !important; }}
-button[kind="primary"]:active {{ background: {ACCENT_700}; }}
-button[kind="secondary"] {{ background: transparent !important; border: 1px solid {N300}; color: {INK}; }}
-button[kind="secondary"]:hover {{ background: {N200}; border-color: {N400}; }}
-button[kind="tertiary"] {{ color: {ACCENT_700}; }}
+[data-testid="stSidebar"] button p {{
+  font-size: 0.9rem !important; font-weight: 500 !important;
+  text-align: left !important; margin: 0 !important;
+}}
+[data-testid="stSidebar"] button [data-testid="stIconMaterial"],
+[data-testid="stSidebar"] button span[class*="material"] {{
+  font-size: 1.05rem !important; color: {N600} !important;
+}}
+[data-testid="stSidebar"] button:hover {{ background: {N200} !important; }}
+[data-testid="stSidebar"] button:active {{ background: {N300} !important; }}
 
-/* ── inputs ────────────────────────────────────────────── */
-.stTextInput input, .stNumberInput input, .stDateInput input,
-[data-baseweb="select"] > div, .stTextArea textarea {{
+/* active page — Streamlit renders disabled buttons at low opacity; override */
+[data-testid="stSidebar"] button:disabled {{
+  background: {N800} !important; opacity: 1 !important; cursor: default !important;
+}}
+[data-testid="stSidebar"] button:disabled p,
+[data-testid="stSidebar"] button:disabled span,
+[data-testid="stSidebar"] button:disabled [data-testid="stIconMaterial"] {{
+  color: {N100} !important; font-weight: 700 !important;
+}}
+
+[data-testid="stSidebar"] hr {{ margin: 0.7rem 0 !important; }}
+
+/* ══ MAIN BUTTONS ══════════════════════════════════════════ */
+[data-testid="stMainBlockContainer"] button {{
+  border-radius: 999px !important;
+  font-family: 'Nunito', system-ui, sans-serif !important;
+  font-weight: 600 !important; font-size: 0.92rem !important;
+  padding: 0.45rem 1.25rem !important;
+  min-height: 0 !important;
+  transition: background 120ms ease !important;
+}}
+[data-testid="stBaseButton-primary"] {{
+  background: {ACCENT} !important; border: 0 !important; color: #fff !important;
+}}
+[data-testid="stBaseButton-primary"]:hover {{ background: #b2622d !important; }}
+[data-testid="stBaseButton-primary"]:active {{ background: {ACCENT_700} !important; }}
+[data-testid="stBaseButton-secondary"] {{
+  background: transparent !important; border: 1px solid {N300} !important; color: {INK} !important;
+}}
+[data-testid="stBaseButton-secondary"]:hover {{
+  background: {N200} !important; border-color: {N400} !important;
+}}
+
+/* ── inputs ────────────────────────────────────────────────── */
+[data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
+[data-testid="stDateInput"] input {{
   background: {N200} !important; border-color: {N300} !important;
   border-radius: 999px !important; font-size: 0.92rem !important;
 }}
-.stTextArea textarea {{ border-radius: 16px !important; }}
-.stTextInput input:focus, .stNumberInput input:focus {{ border-color: {ACCENT} !important; }}
-label, .stTextInput label p, .stNumberInput label p {{
-  font-size: 0.78rem !important; color: {N700} !important;
+[data-baseweb="input"], [data-baseweb="select"] > div {{
+  background: {N200} !important; border-color: {N300} !important;
+  border-radius: 999px !important;
 }}
-:focus-visible {{ outline: 2px solid {ACCENT}; outline-offset: 2px !important; }}
+[data-testid="stTextArea"] textarea {{
+  background: {N200} !important; border-color: {N300} !important;
+  border-radius: 16px !important;
+}}
+[data-baseweb="input"]:focus-within, [data-baseweb="select"] > div:focus-within {{
+  border-color: {ACCENT} !important;
+}}
+label p {{ font-size: 0.8rem !important; color: {N700} !important; }}
 
-/* ── cards: st.container(border=True) and expanders ────── */
-[data-testid="stVerticalBlockBorderWrapper"] {{
-  background: {N200}; border: 0 !important; border-radius: 20px !important;
-  padding: 0.9rem 1rem !important;
+/* ── tabs ──────────────────────────────────────────────────── */
+[data-baseweb="tab-list"] {{ gap: 0.3rem !important; border-bottom: 1px solid {N300} !important; }}
+[data-baseweb="tab"] {{
+  font-family: 'Nunito', system-ui, sans-serif !important;
+  font-weight: 600 !important; font-size: 0.92rem !important;
 }}
-[data-testid="stExpander"] {{
-  background: {N200}; border: 0 !important; border-radius: 20px !important; overflow: hidden !important;
+[data-baseweb="tab-highlight"] {{ background: {ACCENT} !important; height: 2.5px !important; }}
+
+/* ── cards ─────────────────────────────────────────────────── */
+[data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="stVerticalBlock"]) {{
+  border-radius: 20px !important;
+}}
+[data-testid="stExpander"] details {{
+  background: {N200} !important; border: 0 !important;
+  border-radius: 20px !important; overflow: hidden !important;
 }}
 [data-testid="stExpander"] summary {{ font-weight: 600 !important; }}
 [data-testid="stMetric"] {{
-  background: {N200}; border-radius: 20px !important; padding: 0.7rem 0.95rem !important;
+  background: {N200} !important; border-radius: 20px !important;
+  padding: 0.7rem 1rem !important;
 }}
-[data-testid="stMetricValue"] {{ font-weight: 700 !important; }}
 
-/* ── tables & dataframes ───────────────────────────────── */
+/* ── tables ────────────────────────────────────────────────── */
 [data-testid="stDataFrame"], [data-testid="stTable"] {{
-  border-radius: 18px !important; overflow: hidden !important; border: 1px solid {N300};
+  border-radius: 16px !important; overflow: hidden !important;
+  border: 1px solid {N300} !important;
 }}
 [data-testid="stTable"] thead th {{
-  background: {N200}; color: {N700};
-  font-size: 0.68rem !important; letter-spacing: 0.08em !important; text-transform: uppercase !important;
-  font-weight: 700 !important; border-bottom: 1px solid {N300};
+  background: {N200} !important; color: {N700} !important;
+  font-size: 0.7rem !important; letter-spacing: 0.07em !important;
+  text-transform: uppercase !important; font-weight: 700 !important;
 }}
-[data-testid="stTable"] tbody td {{
-  border-bottom: 1px solid rgba(32,30,29,0.08) !important; font-size: 0.9rem !important;
-}}
-[data-testid="stTable"] tbody tr:hover td {{ background: rgba(32,30,29,0.04) !important; }}
+[data-testid="stTable"] tbody td {{ font-size: 0.9rem !important; }}
 
-/* ── task tick-boxes: round, ink fill when checked ─────── */
-[data-testid="stCheckbox"] label {{ align-items: flex-start !important; gap: 0.6rem !important; }}
-[data-testid="stCheckbox"] label > span:first-child {{
-  width: 21px !important; height: 21px !important; border-radius: 999px !important;
-  border: 2px solid {N400}; background: transparent !important;
+/* ── checkboxes: round, ink fill ───────────────────────────── */
+[data-testid="stCheckbox"] label span[aria-checked] {{
+  border-radius: 999px !important; border: 2px solid {N400} !important;
 }}
-[data-testid="stCheckbox"] input:checked + span,
-[data-testid="stCheckbox"] label > span[aria-checked="true"] {{
+[data-testid="stCheckbox"] label span[aria-checked="true"] {{
   background: {N800} !important; border-color: {N800} !important;
 }}
-[data-testid="stCheckbox"] label p {{ font-size: 0.9rem !important; line-height: 1.3 !important; }}
 
-/* ── alerts: terracotta only where it means something ──── */
-[data-testid="stAlert"] {{ border-radius: 18px !important; border: 0 !important; }}
-[data-testid="stNotification"] {{ border-radius: 18px !important; }}
-
-/* ── chrome ────────────────────────────────────────────── */
-#MainMenu, footer {{ visibility: hidden !important; }}
-[data-testid="stDecoration"] {{ display: none !important; }}
-::selection {{ background: rgba(198,113,57,0.3) !important; }}
+/* ── alerts, chrome ────────────────────────────────────────── */
+[data-testid="stAlert"] {{ border-radius: 16px !important; border: 0 !important; }}
+[data-testid="stNotification"] {{ border-radius: 16px !important; }}
+#MainMenu, footer, [data-testid="stDecoration"] {{ display: none !important; }}
+::selection {{ background: rgba(198,113,57,0.28) !important; }}
+:focus-visible {{ outline: 2px solid {ACCENT} !important; outline-offset: 2px !important; }}
 </style>
 """
 
@@ -154,7 +202,7 @@ def inject_theme() -> None:
 
 
 def tag(label: str, tone: str = "neutral") -> str:
-    """Return a pill span, for use inside st.markdown(..., unsafe_allow_html=True).
+    """A pill span for st.markdown(..., unsafe_allow_html=True).
 
     tone: "neutral" (default) or "alert" — alert is the only terracotta.
     """
