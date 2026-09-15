@@ -459,25 +459,26 @@ inject_theme()
 
 # ---------- Sidebar navigation (flat text-style links) ----------
 _initials = "".join(p[0] for p in current_user["name"].split()[:2]).upper()
-st.sidebar.markdown(
-    f"""<div style="display:flex;align-items:center;gap:10px;padding:0 4px 12px">
-      <div style="flex:none;width:40px;height:40px;border-radius:999px;background:#474238;
-                  color:#f9f4ed;display:grid;place-items:center;font-family:Nunito,sans-serif;
-                  font-weight:700;font-size:13px;letter-spacing:0.02em">TPC</div>
-      <div style="min-width:0;line-height:1.15">
-        <div style="font-family:Nunito,sans-serif;font-weight:700;font-size:16px;color:#201e1d">Command Centre</div>
-        <div style="font-size:11.5px;color:#82796a">The Tea Party Cafe</div>
-      </div>
-    </div>
-    <div style="display:flex;align-items:center;gap:8px;padding:6px 12px 6px 6px;margin:0 0 14px;
-                background:#eee7db;border-radius:999px">
-      <span style="flex:none;width:28px;height:28px;border-radius:999px;background:#dcd3c4;
-                   display:grid;place-items:center;font-size:11px;font-weight:700;color:#474238">{_initials}</span>
-      <span style="font-size:12.5px;color:#474238;white-space:nowrap;overflow:hidden;
-                   text-overflow:ellipsis">{current_user['name'].split()[0]} · {current_user['role'].title()}</span>
-    </div>""",
-    unsafe_allow_html=True,
+_brand_html = (
+    '<div style="display:flex;align-items:center;gap:10px;padding:0 4px 12px">'
+    '<div style="flex:none;width:40px;height:40px;border-radius:999px;background:#474238;'
+    'color:#f9f4ed;display:grid;place-items:center;font-family:Nunito,sans-serif;'
+    'font-weight:700;font-size:13px;letter-spacing:0.02em">TPC</div>'
+    '<div style="min-width:0;line-height:1.2">'
+    '<div style="font-family:Nunito,sans-serif;font-weight:700;font-size:16px;color:#201e1d">'
+    'Command Centre</div>'
+    '<div style="font-size:11.5px;color:#82796a">The Tea Party Cafe</div>'
+    '</div></div>'
+    '<div style="display:flex;align-items:center;gap:8px;padding:6px 12px 6px 6px;'
+    'margin:0 0 14px;background:#eee7db;border-radius:999px">'
+    '<span style="flex:none;width:28px;height:28px;border-radius:999px;background:#dcd3c4;'
+    'display:grid;place-items:center;font-size:11px;font-weight:700;color:#474238">'
+    f'{_initials}</span>'
+    '<span style="font-size:12.5px;color:#474238;white-space:nowrap;overflow:hidden;'
+    f'text-overflow:ellipsis">{current_user["name"].split()[0]} · {current_user["role"].title()}</span>'
+    '</div>'
 )
+st.sidebar.markdown(_brand_html, unsafe_allow_html=True)
 
 DAILY_PAGES = ["Tasks", "Stock Take", "Master Stock List", "Recipes", "Suppliers", "Orders", "Group Dining"]
 OWNER_TOOL_PAGES = ["Task History", "Invoices", "Staff", "Sales Sync", "Import Costing Sheet", "Data Export"]
@@ -510,8 +511,8 @@ NAV_ICONS = {
 def _nav_group(options, heading=None):
     if heading:
         st.sidebar.markdown(
-            f'<div style="display:block;font-size:10px;letter-spacing:0.1em;'
-            f'text-transform:uppercase;color:#82796a;line-height:2.4;'
+            '<div style="display:block;font-size:10px;letter-spacing:0.1em;'
+            'text-transform:uppercase;color:#82796a;line-height:2.4;'
             f'margin:10px 0 2px;padding-left:12px">{heading}</div>',
             unsafe_allow_html=True,
         )
@@ -1106,20 +1107,19 @@ if page == "Master Stock List":
                                     stock_chip = tag(f"{stock_display:g} {display_unit}",
                                                      "alert" if is_low else "neutral")
 
-                                st.markdown(
-                                    f"""<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px">
-                                      <div style="flex:1;min-width:0;font-family:Nunito,sans-serif;font-weight:700;
-                                                  font-size:15px;line-height:1.25;color:#201e1d">{r['name']}</div>
-                                      {stock_chip}
-                                    </div>
-                                    <div style="font-size:12px;color:#645c50;line-height:1.35">
-                                      {r['purchase_size_label']} · ${r['purchase_price']:.2f}</div>
-                                    <div style="font-size:12.5px;font-weight:700;color:#201e1d;margin-top:2px">
-                                      ${cost:.3f} / {r['recipe_unit_qty']:g}{r['base_unit']}</div>
-                                    <div style="font-size:11px;color:#82796a;margin-top:3px">
-                                      {r['primary_supplier_name'] or 'No supplier set'}</div>""",
-                                    unsafe_allow_html=True,
+                                _card_html = (
+                                    '<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px">'
+                                    '<div style="flex:1;min-width:0;font-family:Nunito,sans-serif;'
+                                    'font-weight:700;font-size:14.5px;line-height:1.3;color:#201e1d">'
+                                    f'{r["name"]}</div>{stock_chip}</div>'
+                                    '<div style="font-size:12px;color:#645c50;line-height:1.35">'
+                                    f'{r["purchase_size_label"]} · ${r["purchase_price"]:.2f}</div>'
+                                    '<div style="font-size:12.5px;font-weight:700;color:#201e1d;margin-top:3px">'
+                                    f'${cost:.3f} / {r["recipe_unit_qty"]:g}{r["base_unit"]}</div>'
+                                    '<div style="font-size:11px;color:#82796a;margin-top:3px">'
+                                    f'{r["primary_supplier_name"] or "No supplier set"}</div>'
                                 )
+                                st.markdown(_card_html, unsafe_allow_html=True)
                                 if st.button("Edit", type="tertiary", key=f"ing_name_{r['id']}"):
                                     st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
                                     st.session_state.stock_mode = "edit"

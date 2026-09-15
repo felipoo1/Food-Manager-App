@@ -56,14 +56,34 @@ hr {{ margin: 0.8rem 0 !important; border-color: {N300} !important; }}
 }}
 [data-testid="stMainBlockContainer"] h3 {{ font-size: 1.05rem !important; }}
 
-/* day / category cards: sand fill and a softer radius, as in the mock */
-[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"] {{
-  background: {N200} !important; border: 0 !important;
+/* Day / ingredient cards. Streamlit paints the background on a child of
+   the border wrapper, so both have to be set or the sand never shows. */
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"],
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"] > div,
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"]
+  > div > [data-testid="stVerticalBlock"] {{
+  background: {N200} !important;
+  border-color: transparent !important;
   border-radius: 18px !important;
+}}
+/* nested card (a task inside a day) goes cream, with a hairline, exactly
+   as in the mock */
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"]
+  [data-testid="stVerticalBlockBorderWrapper"],
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"]
+  [data-testid="stVerticalBlockBorderWrapper"] > div,
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"]
+  [data-testid="stVerticalBlockBorderWrapper"] > div > [data-testid="stVerticalBlock"] {{
+  background: {N100} !important;
+  border-radius: 14px !important;
 }}
 [data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"]
   [data-testid="stVerticalBlockBorderWrapper"] {{
-  background: {N100} !important; border-radius: 14px !important;
+  border: 1px solid {N300} !important;
+}}
+/* day heading inside a card */
+[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"] h3 {{
+  font-size: 1.1rem !important; margin: 0 0 0.2rem !important;
 }}
 
 /* completion notice: Streamlit's bright green fights the warm palette.

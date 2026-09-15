@@ -1,28 +1,21 @@
-Upload BOTH to the repo root, replacing what is there:
+Upload BOTH to the repo root, reboot, hard-refresh.
 
   app.py
   theme_css.py
 
-Then reboot and hard-refresh (Cmd-Shift-R).
+FIXES
+-----
+1. MASTER STOCK LIST WAS BROKEN - raw HTML printed on screen and the
+   ingredient names ran one letter per line.
 
-WHAT CHANGED
-------------
-1. RIGHT SIDE NO LONGER STACKS.
-   * Master Stock List: was one full-width row per ingredient. Now a
-     4-across card grid - name, on-hand chip, pack/price, cost per
-     recipe unit, supplier - the same card as the mock.
-   * Tasks: the seven days were seven full-width cards stacked down
-     the page. Now two per row, so the week reads across.
+   Cause: the card HTML was written indented inside the Python file.
+   Markdown treats any line starting with 4+ spaces as a CODE BLOCK,
+   so Streamlit rendered the tags as literal text instead of markup.
+   All three HTML blocks (ingredient card, sidebar brand, group
+   heading) are now built as flat single-line strings.
 
-2. SIDEBAR SUB-HEADINGS NO LONGER COVERED.
-   "DAILY RUNNING" and "OWNER TOOLS" had padding but no real height,
-   so the nav pill below rode up over the text. They now have an
-   explicit line-height and a minimum block height.
-
-3. SIZE AND FONT CLOSER TO THE MOCK.
-   Body copy 0.92rem and captions 0.83rem (Streamlit's defaults ran
-   noticeably larger), h3 down to 1.05rem, cards on sand with an 18px
-   radius, nested cards in cream.
-
-4. The bright green completion notice is now the design system's sage,
-   which stops it fighting the warm palette.
+2. DAY CARD SHADING now matches the mock. Streamlit paints the card
+   background on a child of the border wrapper, not the wrapper
+   itself, so the sand fill never applied. Both are now set: day
+   cards sand (#eee7db), task cards inside them cream (#f9f4ed) with
+   a hairline border.
