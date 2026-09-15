@@ -18,6 +18,8 @@ import streamlit as st
 
 N100, N200, N300 = "#f9f4ed", "#eee7db", "#dcd3c4"
 N400, N500, N600 = "#c0b6a5", "#a29884", "#82796a"
+CARD = "#e7ddcb"        # day / ingredient card fill — deliberately a step
+CARD_INNER = "#fbf7f1"  # darker than N200 so it reads on the cream page
 N700, N800, N900 = "#645c50", "#474238", "#2e2b25"
 INK = "#201e1d"
 ACCENT, ACCENT_100, ACCENT_700 = "#c67139", "#fff2eb", "#8c491a"
@@ -56,41 +58,46 @@ hr {{ margin: 0.8rem 0 !important; border-color: {N300} !important; }}
 }}
 [data-testid="stMainBlockContainer"] h3 {{ font-size: 1.05rem !important; }}
 
-/* Day / ingredient cards. Streamlit paints the background on a child of
-   the border wrapper, so both have to be set or the sand never shows. */
-[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"],
-[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"] > div,
-[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"]
-  > div > [data-testid="stVerticalBlock"] {{
-  background: {N200} !important;
-  border-color: transparent !important;
+/* Day / ingredient cards. Set on the wrapper only — the earlier attempt
+   also painted "> div" chains, which caught inner content and washed the
+   two tones back together. */
+[data-testid="stMainBlockContainer"] div[data-testid="stVerticalBlockBorderWrapper"],
+[data-testid="stMainBlockContainer"] div.stVerticalBlockBorderWrapper {{
+  background: {CARD} !important;
+  border: 1px solid #d7cab1 !important;
   border-radius: 18px !important;
 }}
-/* nested card (a task inside a day) goes cream, with a hairline, exactly
-   as in the mock */
-[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"]
-  [data-testid="stVerticalBlockBorderWrapper"],
-[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"]
-  [data-testid="stVerticalBlockBorderWrapper"] > div,
-[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"]
-  [data-testid="stVerticalBlockBorderWrapper"] > div > [data-testid="stVerticalBlock"] {{
-  background: {N100} !important;
+/* a task card inside a day card: cream, so the nesting reads */
+[data-testid="stMainBlockContainer"] div[data-testid="stVerticalBlockBorderWrapper"]
+  div[data-testid="stVerticalBlockBorderWrapper"] {{
+  background: {CARD_INNER} !important;
+  border: 1px solid {N300} !important;
   border-radius: 14px !important;
 }}
-[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"]
-  [data-testid="stVerticalBlockBorderWrapper"] {{
-  border: 1px solid {N300} !important;
-}}
 /* day heading inside a card */
-[data-testid="stMainBlockContainer"] [data-testid="stVerticalBlockBorderWrapper"] h3 {{
-  font-size: 1.1rem !important; margin: 0 0 0.2rem !important;
+[data-testid="stMainBlockContainer"] div[data-testid="stVerticalBlockBorderWrapper"] h3 {{
+  font-size: 1.1rem !important; margin: 0 0 0.25rem !important;
+}}
+/* task title button: read as text, not a control */
+[data-testid="stMainBlockContainer"] [data-testid="stBaseButton-tertiary"] {{
+  padding: 0 !important; min-height: 0 !important; text-align: left !important;
+  justify-content: flex-start !important; font-weight: 600 !important;
+  color: {INK} !important; background: transparent !important;
+  max-width: none !important; margin: 0 !important;
+}}
+/* badges: sand pills rather than Streamlit's grey/orange */
+[data-testid="stMainBlockContainer"] [data-testid="stBadge"] {{
+  background: {N200} !important; color: {N800} !important;
+  border-radius: 999px !important; font-size: 0.72rem !important;
 }}
 
 /* completion notice: Streamlit's bright green fights the warm palette.
    Sage is the design system's second accent. */
 [data-testid="stAlertContainer"], [data-testid="stNotificationContentSuccess"] {{
   background: #e9ede1 !important; color: #3f4a2c !important;
+  border-radius: 12px !important; width: 100% !important;
 }}
+[data-testid="stAlertContainer"] p {{ white-space: normal !important; }}
 [data-testid="stAlertContainer"] p {{ color: #3f4a2c !important; }}
 
 /* ══ SIDEBAR ═══════════════════════════════════════════════

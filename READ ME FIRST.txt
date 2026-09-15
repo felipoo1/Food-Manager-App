@@ -1,21 +1,36 @@
-Upload BOTH to the repo root, reboot, hard-refresh.
+IMPORTANT - neither of the last two uploads reached the repo.
+Checked it directly: the live theme_css.py is two versions old and the
+live app.py still has the nested task columns. That is why nothing has
+changed in the last two rounds - the app has been running old code.
+
+Upload BOTH of these, to the REPO ROOT, replacing the existing files:
 
   app.py
   theme_css.py
 
-FIXES
------
-1. MASTER STOCK LIST WAS BROKEN - raw HTML printed on screen and the
-   ingredient names ran one letter per line.
+Repo root -> "Add file" -> "Upload files" -> drag both in ->
+"Commit changes" -> Commit directly to main.
 
-   Cause: the card HTML was written indented inside the Python file.
-   Markdown treats any line starting with 4+ spaces as a CODE BLOCK,
-   so Streamlit rendered the tags as literal text instead of markup.
-   All three HTML blocks (ingredient card, sidebar brand, group
-   heading) are now built as flat single-line strings.
+HOW TO CONFIRM IT LANDED (10 seconds, before rebooting)
+-------------------------------------------------------
+Open:
+  github.com/felipoo1/Food-Manager-App/blob/main/theme_css.py
+Search (Cmd-F) for:
+  Set on the wrapper only
+Found  -> the new file is live. Reboot the app.
+Not found -> the upload did not commit. Try again.
 
-2. DAY CARD SHADING now matches the mock. Streamlit paints the card
-   background on a child of the border wrapper, not the wrapper
-   itself, so the sand fill never applied. Both are now set: day
-   cards sand (#eee7db), task cards inside them cream (#f9f4ed) with
-   a hairline border.
+WHAT IS IN THIS VERSION
+-----------------------
+1. DAY BOXES NOW CLEARLY SHADED. The fill is #e7ddcb - deliberately a
+   step darker than before, against the #f9f4ed page, with a #d7cab1
+   border. Task cards inside them are near-white (#fbf7f1) so the
+   nesting reads. The previous two attempts used a fill only one shade
+   off the page, which is why you could not see it.
+
+2. THE GREEN COMPLETION NOTICE IS NOW INSIDE THE CARD. It was sitting
+   in a narrow side column, which is what squeezed "Monica at 5:41 AM"
+   into one word per line. The task card is now a flat vertical stack,
+   so the notice spans the card at full width.
+
+3. Task titles read as text rather than buttons; badges are sand pills.
