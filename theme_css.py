@@ -68,40 +68,107 @@ hr {{ margin: 0.8rem 0 !important; border-color: {N300} !important; }}
   border-radius: 18px !important;
 }}
 /* Keyed containers — st.container(key=...) emits a stable .st-key-<key>
-   class, which survives Streamlit's DOM changes (the BorderWrapper testid
-   no longer exists in 1.63, which is why the shading never showed). */
-[class*="st-key-daycard-"] {{
-  background: {CARD} !important;
-  border: 1px solid #d7cab1 !important;
-  border-radius: 20px !important;
-  padding: 16px 14px 14px !important;
-  gap: 8px !important;
-  box-shadow: 0 1px 2px rgba(70,55,35,.06), 0 4px 14px rgba(70,55,35,.07) !important;
+   class. Layout (grids) and shading hang off these, never off testids. */
+
+/* grids: a keyed container becomes a CSS grid, so cards wrap like the mock
+   instead of being squeezed by st.columns */
+[class*="st-key-grid3-"] {{
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  gap: 14px !important; align-items: start !important;
 }}
+[class*="st-key-grid4-"] {{
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 215px), 1fr)) !important;
+  gap: 14px !important; align-items: start !important;
+}}
+@media (max-width: 1100px) {{ [class*="st-key-grid3-"] {{ grid-template-columns: repeat(2, minmax(0,1fr)) !important; }} }}
+@media (max-width: 700px)  {{ [class*="st-key-grid3-"] {{ grid-template-columns: minmax(0,1fr) !important; }} }}
+[class*="st-key-grid"] > * {{ width: auto !important; min-width: 0 !important; }}
+
+/* surfaces */
+[class*="st-key-daycard-"], [class*="st-key-card-"] {{
+  background: {CARD} !important;
+  border-radius: 20px !important;
+  padding: 16px !important;
+  gap: 6px !important;
+}}
+[class*="st-key-card-"] {{ gap: 3px !important; height: 100% !important; }}
 [class*="st-key-task-open-"], [class*="st-key-task-done-"] {{
   border-radius: 14px !important;
-  padding: 9px 12px 8px !important;
-  gap: 0 !important;
+  padding: 9px 12px !important;
+  gap: 2px !important;
 }}
-[class*="st-key-task-open-"] {{
-  background: {CARD_INNER} !important;
-  border: 1px solid {N300} !important;
-}}
-[class*="st-key-task-done-"] {{
-  background: {N300} !important;
-  border: 1px solid transparent !important;
-}}
+[class*="st-key-task-open-"] {{ background: {CARD_INNER} !important; border: 1px solid {N300} !important; }}
+[class*="st-key-task-done-"] {{ background: {N300} !important; border: 1px solid transparent !important; }}
+
+/* Streamlit gives markdown a negative bottom margin — inside our cards that
+   pulled the next box up over the text. Zero it. */
+[class*="st-key-daycard-"] [data-testid="stMarkdown"],
+[class*="st-key-card-"] [data-testid="stMarkdown"],
+[class*="st-key-task-"] [data-testid="stMarkdown"],
+[class*="st-key-stock"] [data-testid="stMarkdown"] {{ margin: 0 !important; }}
+[class*="st-key-daycard-"] p, [class*="st-key-card-"] p, [class*="st-key-task-"] p {{ margin: 0 !important; }}
+
+/* task rows */
 [class*="st-key-task-"] [data-testid="stCheckbox"] p {{
   font-size: 0.9rem !important; line-height: 1.3 !important; color: {INK} !important;
 }}
 [class*="st-key-task-done-"] [data-testid="stCheckbox"] p {{ color: {N700} !important; }}
-[class*="st-key-task-"] [data-testid="stCaptionContainer"] {{
-  font-size: 0.72rem !important; margin: 0 0 0 30px !important; color: {N700} !important;
+[class*="st-key-task-"] [data-testid="stCaptionContainer"],
+[class*="st-key-task-"] [data-testid="stCaptionContainer"] p {{
+  font-size: 0.72rem !important; line-height: 1.3 !important; color: {N700} !important;
+  padding-left: 1.65rem !important;
 }}
-[class*="st-key-task-"] [data-testid="stBaseButton-tertiary"] {{
-  margin-left: 30px !important; min-height: 0 !important; padding: 2px 0 !important;
-  font-size: 0.72rem !important; color: {ACCENT_700} !important;
+[data-testid="stCheckbox"] label[data-baseweb="checkbox"] > span:first-child {{
+  border-radius: 999px !important; border: 2px solid {N400} !important; background: transparent !important;
 }}
+[data-testid="stCheckbox"] label[data-baseweb="checkbox"]:has(input:checked) > span:first-child {{
+  background: {N800} !important; border-color: {N800} !important;
+}}
+
+/* small text links (Edit etc.) — any button keyed link-... */
+[class*="st-key-link-"] {{ margin: 0 !important; }}
+[class*="st-key-link-"] button {{
+  min-height: 0 !important; padding: 0 !important; border: 0 !important; background: none !important;
+  font-size: 0.75rem !important; font-weight: 700 !important; color: {ACCENT_700} !important;
+}}
+[class*="st-key-task-"] [class*="st-key-link-"] {{ padding-left: 1.65rem !important; }}
+[class*="st-key-link-"] button:hover {{ text-decoration: underline !important; }}
+
+/* card title buttons (recipe categories) */
+[class*="st-key-cardtitle-"] button {{
+  min-height: 0 !important; padding: 2px 4px !important; border: 0 !important; background: none !important;
+  font-size: 1rem !important; font-weight: 800 !important; color: {INK} !important; text-align: left !important;
+}}
+
+/* pills filter row (master stock categories, recipe types) */
+[class*="st-key-pills-"] button {{
+  border-radius: 999px !important; padding: 6px 15px !important; min-height: 0 !important;
+  border: 1px solid {N300} !important; background: {CARD_INNER} !important; color: {N800} !important;
+  font-weight: 600 !important;
+}}
+[class*="st-key-pills-"] button[kind="pillsActive"],
+[class*="st-key-pills-"] [data-testid="stBaseButton-pillsActive"] {{
+  background: {N800} !important; border-color: {N800} !important; color: #fff !important;
+}}
+[class*="st-key-pills-"] [data-testid="stBaseButton-pillsActive"] p {{ color: #fff !important; }}
+
+/* stock take table — one rounded box, header row + divided rows */
+[class*="st-key-stocktable"] {{
+  background: {CARD} !important; border-radius: 20px !important; padding: 6px 18px 10px !important; gap: 0 !important;
+}}
+[class*="st-key-stockrow-"] {{ border-top: 1px solid {N300} !important; padding: 8px 0 !important; }}
+[class*="st-key-stockhead"] {{ padding: 10px 0 8px !important; }}
+[class*="st-key-stockhead"] p {{
+  font-size: 0.7rem !important; font-weight: 700 !important; letter-spacing: .08em !important;
+  text-transform: uppercase !important; color: {N700} !important; margin: 0 !important;
+}}
+[class*="st-key-stockrow-"] [data-testid="stNumberInputStepDown"],
+[class*="st-key-stockrow-"] [data-testid="stNumberInputStepUp"] {{ display: none !important; }}
+[class*="st-key-stockrow-"] input {{ background: {N100} !important; }}
+[class*="st-key-stockrow-"] [data-testid="stNumberInput"] > div {{ background: {N100} !important; }}
+
 /* a task card inside a day card: cream, so the nesting reads */
 [data-testid="stMainBlockContainer"] div[data-testid="stVerticalBlockBorderWrapper"]
   div[data-testid="stVerticalBlockBorderWrapper"] {{
@@ -323,9 +390,12 @@ def inject_theme() -> None:
 def tag(label: str, tone: str = "neutral") -> str:
     """A pill span for st.markdown(..., unsafe_allow_html=True).
 
-    tone: "neutral" (default) or "alert" — alert is the only terracotta.
+    tone: "neutral" (default), "ok" (sage) or "alert" (terracotta).
     """
-    bg, fg = (ACCENT_100, ACCENT_700) if tone == "alert" else (N200, N800)
+    bg, fg = {
+        "alert": (ACCENT_100, ACCENT_700),
+        "ok": ("#e9ede1", "#4b5636"),
+    }.get(tone, (N200, N800))
     return (
         f'<span style="display:inline-flex;align-items:center;font-size:0.72rem;'
         f'padding:3px 10px;border-radius:999px;background:{bg};color:{fg};'
@@ -362,4 +432,40 @@ def done_row(who: str, when: str, note=None) -> str:
         f'<div style="font-size:0.82rem;font-weight:700;color:#3f4a2c">{who}'
         f'<span style="font-weight:400;color:#5c6a44"> &middot; {when}</span></div>'
         f'{note_html}</div></div>'
+    )
+
+
+def page_header(title: str, caption: str, button_label=None, key=None) -> bool:
+    """Title + caption on the left, primary button bottom-right, as in the mock.
+    Returns True when the button was clicked."""
+    import streamlit as st
+    left, right = st.columns([8, 2], vertical_alignment="bottom")
+    with left:
+        st.title(title)
+        if caption:
+            st.caption(caption)
+    clicked = False
+    if button_label:
+        with right:
+            with st.container(horizontal=True, horizontal_alignment="right"):
+                clicked = st.button(button_label, type="primary", key=key)
+    return clicked
+
+
+def card_html(title: str, lines, chip: str = "") -> str:
+    """Card body in the mock's rhythm: heading (+ optional chip), then lines.
+    lines: list of (text, style) where style is "meta", "strong" or "faint"."""
+    styles = {
+        "meta":   f"font-size:0.78rem;color:{N700}",
+        "strong": f"font-size:0.84rem;font-weight:700;color:{N900}",
+        "faint":  f"font-size:0.72rem;color:{N600}",
+    }
+    body = "".join(
+        f'<div style="{styles.get(s, styles["meta"])};line-height:1.35;margin-top:2px">{t}</div>'
+        for t, s in lines if t
+    )
+    return (
+        f'<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:2px">'
+        f'<div style="flex:1;min-width:0;font-family:Nunito,sans-serif;font-weight:800;'
+        f'font-size:1.02rem;line-height:1.25;color:{INK}">{title}</div>{chip}</div>{body}'
     )

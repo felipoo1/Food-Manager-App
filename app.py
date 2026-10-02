@@ -454,7 +454,7 @@ is_owner = current_user["role"] == "owner"
 # Palette, type, pill nav, cards, tables and tick-boxes live in theme_css.py
 # and in .streamlit/config.toml. Do not add page-level <style> blocks here —
 # they fight the theme.
-from theme_css import inject_theme, tag, day_header
+from theme_css import inject_theme, tag, day_header, page_header, card_html
 inject_theme()
 
 
@@ -719,11 +719,9 @@ if page == "Tasks":
 
         # Days laid out in a grid, two per row, so the week reads across
         # rather than as one long scroll (matches the design mock).
-        DAYS_PER_ROW = 2
-        for _d in range(0, len(DAYS), DAYS_PER_ROW):
-            _day_cols = st.columns(DAYS_PER_ROW)
-            for _day_col, day in zip(_day_cols, DAYS[_d:_d + DAYS_PER_ROW]):
-                with _day_col:
+        with st.container(key="grid3-days"):
+            for day in DAYS:
+                if True:
                     day_tasks = [t for t in all_task_defs if t["day_of_week"] == day]
                     with st.container(key=f"daycard-{day}"):
                         st.markdown(
@@ -767,7 +765,7 @@ if page == "Tasks":
                                     with st.expander("Task notes"):
                                         st.write(t["notes"])
                                 if is_owner and not is_pending:
-                                    if st.button("Edit", type="tertiary", key=f"task_title_{t['id']}"):
+                                    if st.button("Edit", type="tertiary", key=f"link-task-{t['id']}"):
                                         st.session_state["edit_task_select"] = f"[{t['day_of_week']} / {t['section']}] {t['title']}"
                                         st.session_state.task_mode = "edit"
                                         st.rerun()
@@ -800,7 +798,6 @@ if page == "Tasks":
                                     st.button("Cancel", key=f"cancel_{t['id']}",
                                               on_click=_cancel_pending, args=(ck,))
                         conn.close()
-                    st.write("")
 
     # ---------------- ADD VIEW (owner only) ----------------
     elif st.session_state.task_mode == "add":
@@ -916,35 +913,89 @@ if page == "Tasks":
 # PAGE: STOCK TAKE
 # =========================================================
 elif page == "Stock Take":
-    st.title("Weekly stock take")
-    st.caption("Count what's actually on the shelf. Pulled live from the Master Stock List — nothing is duplicated here.")
-
     conn = db.get_connection()
     ingredients = conn.execute("""
         SELECT * FROM ingredients ORDER BY category, name
     """).fetchall()
     conn.close()
 
+    head_l, head_r = st.columns([7, 3], vertical_alignment="bottom")
+    with head_l:
+        st.title("Weekly stock take")
+        st.caption("Count what is on the shelf. Anything off by more than ±1 kg / ±1 L / ±1 unit is flagged.")
+    with head_r:
+        with st.container(horizontal=True, horizontal_alignment="right", vertical_alignment="bottom"):
+            count_date = st.date_input("Date", value=date.today(), label_visibility="collapsed", width=150)
+            save_clicked = st.button("Save count", type="primary", disabled=not ingredients)
+
     if not ingredients:
         st.info("No ingredients in the Master Stock List yet — add some first.")
     else:
-        with st.form("stock_take_form"):
-            count_date = st.date_input("Stock take date", value=date.today())
-            st.write("")
+        def _count_key(item_id):
+            return f"count_{item_id}_{count_date}"
 
-            categories = sorted(set(r["category"] or "Uncategorised" for r in ingredients))
-            entered_values = {}
-            for cat in categories:
-                st.markdown(f"**{cat}**")
-                cat_items = [r for r in ingredients if (r["category"] or "Uncategorised") == cat]
-                for item in cat_items:
-                    entered_values[item["id"]] = st.number_input(
-                        f"{item['name']} ({item['base_unit']})",
-                        min_value=0.0, step=1.0, key=f"count_{item['id']}_{count_date}"
+        def _variance(item, qty):
+            expected = item["current_stock_qty"]
+            if qty is None or expected is None:
+                return None, False
+            var = qty - expected
+            return var, abs(var) > db.get_variance_tolerance(item["base_unit"])
+
+        flagged_now = sum(
+            1 for it in ingredients if _variance(it, st.session_state.get(_count_key(it["id"])))[1]
+        )
+        counted_now = sum(1 for it in ingredients if st.session_state.get(_count_key(it["id"])) is not None)
+        st.markdown(
+            '<div style="display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 6px">'
+            + tag(f"{count_date.strftime('%a %-d %b')} · {current_user['name']}")
+            + tag(f"{counted_now} of {len(ingredients)} counted")
+            + tag(f"{flagged_now} over tolerance", "alert" if flagged_now else "neutral")
+            + '</div>',
+            unsafe_allow_html=True,
+        )
+
+        COLS = [4, 2, 2, 2]
+        with st.container(key="stocktable"):
+            with st.container(key="stockhead"):
+                h = st.columns(COLS, vertical_alignment="center")
+                for col, label in zip(h, ["Ingredient", "Expected", "Counted", "Variance"]):
+                    col.markdown(label)
+            for item in ingredients:
+                unit = item["base_unit"]
+                with st.container(key=f"stockrow-{item['id']}"):
+                    c1, c2, c3, c4 = st.columns(COLS, vertical_alignment="center")
+                    c1.markdown(
+                        f'<div style="font-weight:700;font-size:0.9rem;line-height:1.25">{item["name"]}</div>'
+                        f'<div style="font-size:0.72rem;color:#82796a">{item["category"] or "Uncategorised"}</div>',
+                        unsafe_allow_html=True,
                     )
+                    exp = item["current_stock_qty"]
+                    c2.markdown(
+                        f'<span style="font-size:0.85rem;color:#645c50">'
+                        f'{f"{exp:g} {unit}" if exp is not None else "Not tracked"}</span>',
+                        unsafe_allow_html=True,
+                    )
+                    with c3:
+                        qty = st.number_input(
+                            f"Counted {item['name']}", min_value=0.0, step=1.0, value=None,
+                            placeholder=unit, label_visibility="collapsed", key=_count_key(item["id"]),
+                        )
+                    var, flagged = _variance(item, qty)
+                    if var is None:
+                        chip = tag("—")
+                    else:
+                        chip = tag(f"{var:+g} {unit}", "alert" if flagged else "ok")
+                    c4.markdown(chip, unsafe_allow_html=True)
 
-            submitted = st.form_submit_button("Submit stock take")
-            if submitted:
+        if save_clicked:
+            entered_values = {
+                it["id"]: st.session_state.get(_count_key(it["id"]))
+                for it in ingredients
+                if st.session_state.get(_count_key(it["id"])) is not None
+            }
+            if not entered_values:
+                st.warning("Nothing counted yet — enter at least one quantity.")
+            else:
                 conn = db.get_connection()
                 # Resubmitting the same date overwrites that date's counts, rather than duplicating them
                 conn.execute("DELETE FROM stock_takes WHERE count_date = ?", (count_date.isoformat(),))
@@ -952,7 +1003,7 @@ elif page == "Stock Take":
                 flagged_items = []
                 for ingredient_id, qty in entered_values.items():
                     ing = conn.execute("SELECT * FROM ingredients WHERE id = ?", (ingredient_id,)).fetchone()
-                    expected = ing["current_stock_qty"]  # None if this ingredient has never been counted/initialized
+                    expected = ing["current_stock_qty"]
                     variance = None
                     is_flagged = 0
                     if expected is not None:
@@ -967,9 +1018,7 @@ elif page == "Stock Take":
                             (ingredient_id, count_date, quantity_counted, counted_by, expected_qty_before, variance, is_flagged)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                     """, (ingredient_id, count_date.isoformat(), qty, current_user["name"], expected, variance, is_flagged))
-
-                    # Recalibrate the running balance to match what staff actually counted —
-                    # this becomes the new "expected" baseline until the next stock take.
+                    # The count becomes the new expected baseline until the next stock take.
                     conn.execute("UPDATE ingredients SET current_stock_qty = ? WHERE id = ?", (qty, ingredient_id))
 
                 conn.commit()
@@ -1063,13 +1112,13 @@ if page == "Master Stock List":
     if "stock_mode" not in st.session_state:
         st.session_state.stock_mode = "list"
 
-    title_col, btn1 = st.columns([7, 2])
-    with title_col:
-        st.title("Master stock list")
-    with btn1:
-        if st.button("Add New Ingredient", type="primary", width="stretch"):
-            st.session_state.stock_mode = "add"
-            st.rerun()
+    if page_header(
+        "Master stock list",
+        "Every ingredient, its price and its cost per recipe unit." if st.session_state.stock_mode == "list" else "",
+        "Add ingredient", key="add_ingredient_btn",
+    ):
+        st.session_state.stock_mode = "add"
+        st.rerun()
 
     if st.session_state.stock_mode != "list":
         if st.button("← Back to list"):
@@ -1079,7 +1128,6 @@ if page == "Master Stock List":
 
     # ---------------- LIST VIEW ----------------
     if st.session_state.stock_mode == "list":
-        st.caption("Every raw ingredient, its current price, and its cost per recipe unit. Click a name to edit it.")
 
         conn = db.get_connection()
         ingredients = conn.execute("""
@@ -1095,46 +1143,35 @@ if page == "Master Stock List":
             st.info("No ingredients yet. Click \"Add New Ingredient\" above to add your first one.")
         else:
             categories = sorted(set(r["category"] or "Uncategorised" for r in ingredients))
-            for cat in categories:
-                st.subheader(cat)
-                cat_rows = [r for r in ingredients if (r["category"] or "Uncategorised") == cat]
+            with st.container(key="pills-mastercat"):
+                chosen_cat = st.pills(
+                    "Category", ["All"] + categories, default="All",
+                    label_visibility="collapsed", key="master_cat_filter",
+                ) or "All"
+            shown = [r for r in ingredients if chosen_cat == "All" or (r["category"] or "Uncategorised") == chosen_cat]
 
-                # Cards in a wrapping grid rather than one full-width row per
-                # ingredient — four per row, matching the design mock.
-                CARDS_PER_ROW = 4
-                for i in range(0, len(cat_rows), CARDS_PER_ROW):
-                    row_cols = st.columns(CARDS_PER_ROW)
-                    for col, r in zip(row_cols, cat_rows[i:i + CARDS_PER_ROW]):
-                        cost = db.cost_per_recipe_unit(r)
-                        with col:
-                            with st.container(border=True):
-                                stock_chip = ""
-                                if r["current_stock_qty"] is not None:
-                                    display_unit, factor = db.get_order_unit(r["base_unit"])
-                                    stock_display = r["current_stock_qty"] / factor
-                                    is_low = (r["min_stock_qty"] is not None
-                                              and r["current_stock_qty"] < r["min_stock_qty"])
-                                    stock_chip = tag(f"{stock_display:g} {display_unit}",
-                                                     "alert" if is_low else "neutral")
+            with st.container(key="grid4-ingredients"):
+                for r in shown:
+                    cost = db.cost_per_recipe_unit(r)
+                    with st.container(key=f"card-ing-{r['id']}"):
+                        stock_chip = ""
+                        if r["current_stock_qty"] is not None:
+                            display_unit, factor = db.get_order_unit(r["base_unit"])
+                            stock_display = r["current_stock_qty"] / factor
+                            is_low = (r["min_stock_qty"] is not None
+                                      and r["current_stock_qty"] < r["min_stock_qty"])
+                            stock_chip = tag(f"{stock_display:g} {display_unit}",
+                                             "alert" if is_low else "neutral")
+                        st.markdown(card_html(r["name"], [
+                            (f'{r["purchase_size_label"]} · ${r["purchase_price"]:.2f}', "meta"),
+                            (f'${cost:.3f} / {r["recipe_unit_qty"]:g}{r["base_unit"]}', "strong"),
+                            (r["primary_supplier_name"] or "No supplier set", "faint"),
+                        ], stock_chip), unsafe_allow_html=True)
+                        if st.button("Edit", type="tertiary", key=f"link-ing-{r['id']}"):
+                            st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
+                            st.session_state.stock_mode = "edit"
+                            st.rerun()
 
-                                _card_html = (
-                                    '<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px">'
-                                    '<div style="flex:1;min-width:0;font-family:Nunito,sans-serif;'
-                                    'font-weight:700;font-size:14.5px;line-height:1.3;color:#201e1d">'
-                                    f'{r["name"]}</div>{stock_chip}</div>'
-                                    '<div style="font-size:12px;color:#645c50;line-height:1.35">'
-                                    f'{r["purchase_size_label"]} · ${r["purchase_price"]:.2f}</div>'
-                                    '<div style="font-size:12.5px;font-weight:700;color:#201e1d;margin-top:3px">'
-                                    f'${cost:.3f} / {r["recipe_unit_qty"]:g}{r["base_unit"]}</div>'
-                                    '<div style="font-size:11px;color:#82796a;margin-top:3px">'
-                                    f'{r["primary_supplier_name"] or "No supplier set"}</div>'
-                                )
-                                st.markdown(_card_html, unsafe_allow_html=True)
-                                if st.button("Edit", type="tertiary", key=f"ing_name_{r['id']}"):
-                                    st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
-                                    st.session_state.stock_mode = "edit"
-                                    st.rerun()
-            st.caption("(Updated dates shown on the ingredient's own page.)")
 
     # ---------------- ADD VIEW ----------------
     elif st.session_state.stock_mode == "add":
@@ -1429,7 +1466,12 @@ elif page == "Recipes":
     if "recipe_active_type" not in st.session_state:
         st.session_state.recipe_active_type = "Prep"
 
-    st.title("Recipes")
+    if page_header(
+        "Recipes", "Costed from the master stock list. Costs include 9% GST.",
+        "New category" if st.session_state.recipe_mode == "categories" else None, key="newcat_btn",
+    ):
+        st.session_state.recipe_mode = "add_category"
+        st.rerun()
 
     search_text = st.text_input(
         "Search recipes", key="recipe_search", label_visibility="collapsed",
@@ -1478,45 +1520,40 @@ elif page == "Recipes":
                     cols[3].write(f"**Cost:** ${cost:.2f}")
 
     elif st.session_state.recipe_mode == "categories":
-        type_tabs = st.tabs(["Prep", "Dish", "Beverage"])
-        for tab, rtype in zip(type_tabs, ["Prep", "Dish", "Beverage"]):
-            with tab:
-                top_col1, top_col2 = st.columns([8, 3])
-                with top_col2:
-                    if st.button("New Category", type="primary", width="stretch", key=f"newcat_{rtype}"):
-                        st.session_state.recipe_active_type = rtype
-                        st.session_state.recipe_mode = "add_category"
-                        st.rerun()
+        with st.container(key="pills-rtype"):
+            picked = st.pills(
+                "Type", ["Prep", "Dish", "Beverage"],
+                default=st.session_state.recipe_active_type,
+                label_visibility="collapsed", key="recipe_type_pills",
+            )
+        rtype = picked or st.session_state.recipe_active_type
+        st.session_state.recipe_active_type = rtype
 
-                conn = db.get_connection()
-                categories = conn.execute(
-                    "SELECT * FROM recipe_categories WHERE type = ? ORDER BY name", (rtype,)
-                ).fetchall()
-                counts = {}
-                for c in categories:
-                    counts[c["id"]] = conn.execute(
-                        "SELECT COUNT(*) AS n FROM recipes WHERE category_id = ?", (c["id"],)
-                    ).fetchone()["n"]
-                conn.close()
+        conn = db.get_connection()
+        categories = conn.execute(
+            "SELECT * FROM recipe_categories WHERE type = ? ORDER BY name", (rtype,)
+        ).fetchall()
+        counts = {}
+        for c in categories:
+            counts[c["id"]] = conn.execute(
+                "SELECT COUNT(*) AS n FROM recipes WHERE category_id = ?", (c["id"],)
+            ).fetchone()["n"]
+        conn.close()
 
-                if not categories:
-                    st.info(f"No {rtype} categories yet. Click \"+ New Category\" to create one (e.g. \"Coffee Preps\", \"Pasta\").")
-                else:
-                    cards_per_row = 3
-                    for i in range(0, len(categories), cards_per_row):
-                        row_cats = categories[i:i + cards_per_row]
-                        row_cols = st.columns(cards_per_row)
-                        for col, cat in zip(row_cols, row_cats):
-                            with col:
-                                with st.container(border=True):
-                                    render_category_image_or_placeholder(cat["image_url"], rtype)
-                                    if st.button(cat["name"], type="tertiary", key=f"cat_open_{cat['id']}"):
-                                        st.session_state.recipe_active_category_id = cat["id"]
-                                        st.session_state.recipe_active_type = rtype
-                                        st.session_state.recipe_mode = "category_detail"
-                                        st.rerun()
-                                    n = counts[cat["id"]]
-                                    st.caption(f"{n} recipe{'s' if n != 1 else ''}")
+        if not categories:
+            st.info(f"No {rtype} categories yet. Click \"New category\" to create one (e.g. \"Coffee Preps\", \"Pasta\").")
+        else:
+            with st.container(key="grid4-recipecats"):
+                for cat in categories:
+                    with st.container(key=f"card-rcat-{cat['id']}"):
+                        render_category_image_or_placeholder(cat["image_url"], rtype, height_px=120)
+                        if st.button(cat["name"], type="tertiary", key=f"cardtitle-{cat['id']}"):
+                            st.session_state.recipe_active_category_id = cat["id"]
+                            st.session_state.recipe_active_type = rtype
+                            st.session_state.recipe_mode = "category_detail"
+                            st.rerun()
+                        n = counts[cat["id"]]
+                        st.caption(f"{n} recipe{'s' if n != 1 else ''}")
 
     # ======================================================
     # ADD CATEGORY
@@ -2016,13 +2053,13 @@ elif page == "Suppliers":
     if "supplier_mode" not in st.session_state:
         st.session_state.supplier_mode = "list"
 
-    title_col, btn1 = st.columns([7, 2])
-    with title_col:
-        st.title("Suppliers")
-    with btn1:
-        if st.button("Add New Supplier", type="primary", width="stretch"):
-            st.session_state.supplier_mode = "add"
-            st.rerun()
+    if page_header(
+        "Suppliers",
+        "Every supplier you buy from." if st.session_state.supplier_mode == "list" else "",
+        "Add supplier", key="add_supplier_btn",
+    ):
+        st.session_state.supplier_mode = "add"
+        st.rerun()
 
     if st.session_state.supplier_mode != "list":
         if st.button("← Back to list"):
@@ -2032,7 +2069,6 @@ elif page == "Suppliers":
 
     # ---------------- LIST VIEW ----------------
     if st.session_state.supplier_mode == "list":
-        st.caption("Every supplier you buy from. Click a name to view or edit its details.")
 
         conn = db.get_connection()
         suppliers = conn.execute("SELECT * FROM suppliers ORDER BY name").fetchall()
@@ -2041,17 +2077,22 @@ elif page == "Suppliers":
         if not suppliers:
             st.info("No suppliers yet. Click \"Add New Supplier\" above to add your first one.")
         else:
-            for s in suppliers:
-                with st.container(border=True):
-                    cols = st.columns([2, 2, 2, 2])
-                    with cols[0]:
-                        if st.button(s["name"], type="tertiary", key=f"supplier_name_{s['id']}"):
+            with st.container(key="grid3-suppliers"):
+                for s in suppliers:
+                    with st.container(key=f"card-sup-{s['id']}"):
+                        contact = " · ".join(x for x in [s["phone"], s["email"]] if x)
+                        terms = " · ".join(x for x in [
+                            s["payment_terms"],
+                            f"Delivers {s['delivery_days']}" if s["delivery_days"] else None,
+                        ] if x)
+                        st.markdown(card_html(s["name"], [
+                            (contact or "No contact details", "meta"),
+                            (terms, "faint"),
+                        ]), unsafe_allow_html=True)
+                        if st.button("Edit", type="tertiary", key=f"link-sup-{s['id']}"):
                             st.session_state["edit_supplier_select"] = s["name"]
                             st.session_state.supplier_mode = "edit"
                             st.rerun()
-                    cols[1].write(f"**Email:** {s['email'] or '-'}")
-                    cols[2].write(f"**Phone:** {s['phone'] or '-'}")
-                    cols[3].write(f"**Terms:** {s['payment_terms'] or '-'}")
 
     # ---------------- ADD VIEW ----------------
     elif st.session_state.supplier_mode == "add":
