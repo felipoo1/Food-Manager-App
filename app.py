@@ -454,8 +454,30 @@ is_owner = current_user["role"] == "owner"
 # Palette, type, pill nav, cards, tables and tick-boxes live in theme_css.py
 # and in .streamlit/config.toml. Do not add page-level <style> blocks here —
 # they fight the theme.
-from theme_css import inject_theme, tag
+from theme_css import inject_theme, tag, day_header
 inject_theme()
+
+
+def _toggle_task(ck, pending_key, was_done, log_id, user_name):
+    """Checkbox on a task row. Ticking starts the PIN step; unticking a
+    completed task undoes it (the mock's click-to-cancel)."""
+    if st.session_state[ck]:
+        st.session_state.pending_pin_task = pending_key
+    else:
+        st.session_state.pending_pin_task = None
+        if was_done and log_id:
+            c = db.get_connection()
+            c.execute(
+                "UPDATE task_log SET reverted=1, reverted_by=?, reverted_at=? WHERE id=?",
+                (user_name, datetime.now().strftime("%-I:%M %p"), log_id),
+            )
+            c.commit()
+            c.close()
+
+
+def _cancel_pending(ck):
+    st.session_state.pending_pin_task = None
+    st.session_state[ck] = False
 
 # ---------- Sidebar navigation (flat text-style links) ----------
 _initials = "".join(p[0] for p in current_user["name"].split()[:2]).upper()
@@ -655,6 +677,10 @@ def get_supplier_options():
 # =========================================================
 if page == "Tasks":
     DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    _monday = date.today() - timedelta(days=date.today().weekday())
+    DAY_DATES = {
+        d: (_monday + timedelta(days=i)).strftime("%-d %b") for i, d in enumerate(DAYS)
+    }
 
     if "task_mode" not in st.session_state:
         st.session_state.task_mode = "list"
@@ -662,11 +688,11 @@ if page == "Tasks":
         st.session_state.task_mode = "list"  # safety: only the owner can reach add/edit
 
     if is_owner:
-        title_col, btn1 = st.columns([7, 2])
+        title_col, btn1 = st.columns([8, 2], vertical_alignment="bottom")
         with title_col:
             st.title("Weekly task workspace")
         with btn1:
-            if st.button("Add New Task", type="primary", width="stretch"):
+            if st.button("Add a task", type="primary"):
                 st.session_state.task_mode = "add"
                 st.rerun()
 
@@ -699,86 +725,81 @@ if page == "Tasks":
             for _day_col, day in zip(_day_cols, DAYS[_d:_d + DAYS_PER_ROW]):
                 with _day_col:
                     day_tasks = [t for t in all_task_defs if t["day_of_week"] == day]
-                    with st.container(border=True):
-                        st.subheader(day)
+                    with st.container(key=f"daycard-{day}"):
+                        st.markdown(
+                            day_header(day, DAY_DATES.get(day, "")),
+                            unsafe_allow_html=True,
+                        )
                         if not day_tasks:
                             st.caption("No tasks assigned to this day.")
-                        for section in ["Kitchen", "Floor"]:
-                            section_tasks = [t for t in day_tasks if t["section"] == section]
-                            if not section_tasks:
-                                continue
-                            st.markdown(f"**{section}**")
+                        conn = db.get_connection()
+                        for t in sorted(day_tasks, key=lambda x: (x["section"] != "Kitchen", x["title"])):
+                            pending_key = f"{t['id']}-pending"
+                            is_done, completed_by, completed_at, log_id = completions[t["id"]]
+                            is_pending = st.session_state.pending_pin_task == pending_key
+                            ck = f"chk_{t['id']}"
+                            if not is_pending:
+                                st.session_state[ck] = bool(is_done)
 
-                            conn = db.get_connection()
-                            for t in section_tasks:
-                                pending_key = f"{t['id']}-pending"
-                                is_done, completed_by, completed_at, log_id = completions[t["id"]]
+                            when = "Weekly" if t["recurrence"] != "once" else f"One-off {t['specific_date']}"
+                            if is_done:
+                                meta = f"{t['section']} · {when} · done by {completed_by}, {completed_at}"
+                                note_row = conn.execute(
+                                    "SELECT completion_note FROM task_log WHERE id = ?", (log_id,)
+                                ).fetchone()
+                                done_note = note_row["completion_note"] if note_row and note_row["completion_note"] else None
+                            else:
+                                meta = f"{t['section']} · {when} · not yet done"
+                                done_note = None
 
-                                with st.container(border=True):
-                                    if is_owner:
-                                        if st.button(t["title"], type="tertiary", key=f"task_title_{t['id']}"):
-                                            st.session_state["edit_task_select"] = f"[{t['day_of_week']} / {t['section']}] {t['title']}"
-                                            st.session_state.task_mode = "edit"
-                                            st.rerun()
-                                    else:
-                                        st.write(t["title"])
-                                
-                                    if t["recurrence"] == "once":
-                                        st.badge(f"One-off: {t['specific_date']}", color="gray")
-                                    else:
-                                        st.badge("Weekly", color="orange")
-                                
-                                    if t["notes"]:
-                                        with st.expander("Task notes"):
-                                            st.write(t["notes"])
-                                
-                                    if is_done:
-                                        existing_note = conn.execute(
-                                            "SELECT completion_note FROM task_log WHERE id = ?", (log_id,)
-                                        ).fetchone()
-                                        if existing_note and existing_note["completion_note"]:
-                                            st.info(f"💬 {completed_by}: {existing_note['completion_note']}")
-                                        st.success(f"✅ {completed_by} at {completed_at}")
-                                        if st.button("Undo", key=f"undo_{t['id']}"):
-                                            conn.execute(
-                                                "UPDATE task_log SET reverted=1, reverted_by=?, reverted_at=? WHERE id=?",
-                                                (current_user["name"], datetime.now().strftime("%-I:%M %p"), log_id)
-                                            )
-                                            conn.commit()
-                                            st.rerun()
-                                    elif st.session_state.pending_pin_task == pending_key:
-                                        pin_try = pin_entry_boxes(f"task_pin_{t['id']}")
-                                        task_note = st.text_input(
-                                            "Leave a note (optional)",
-                                            placeholder="e.g. Done but fridge needs restocking...",
-                                            key=f"task_note_{t['id']}"
-                                        )
-                                        if st.button("Confirm", key=f"confirm_{t['id']}"):
-                                            if len(pin_try) < 4 or not pin_try.isdigit():
-                                                st.error("Please fill in all 4 digits.")
+                            state_cls = "done" if is_done else "open"
+                            with st.container(key=f"task-{state_cls}-{t['id']}"):
+                                st.checkbox(
+                                    f"~~{t['title']}~~" if is_done else t["title"],
+                                    key=ck,
+                                    on_change=_toggle_task,
+                                    args=(ck, pending_key, bool(is_done), log_id, current_user["name"]),
+                                )
+                                st.caption(meta)
+                                if done_note:
+                                    st.caption(f"“{done_note}”")
+                                if t["notes"]:
+                                    with st.expander("Task notes"):
+                                        st.write(t["notes"])
+                                if is_owner and not is_pending:
+                                    if st.button("Edit", type="tertiary", key=f"task_title_{t['id']}"):
+                                        st.session_state["edit_task_select"] = f"[{t['day_of_week']} / {t['section']}] {t['title']}"
+                                        st.session_state.task_mode = "edit"
+                                        st.rerun()
+
+                                if is_pending:
+                                    pin_try = pin_entry_boxes(f"task_pin_{t['id']}")
+                                    st.text_input(
+                                        "Leave a note (optional)",
+                                        placeholder="e.g. Done but fridge needs restocking...",
+                                        key=f"task_note_{t['id']}"
+                                    )
+                                    if st.button("Confirm", type="primary", key=f"confirm_{t['id']}"):
+                                        if len(pin_try) < 4 or not pin_try.isdigit():
+                                            st.error("Please fill in all 4 digits.")
+                                        else:
+                                            staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_try,)).fetchone()
+                                            if staff_match is None:
+                                                st.error("PIN not recognized.")
+                                                clear_pin_boxes(f"task_pin_{t['id']}")
                                             else:
-                                                staff_match = conn.execute("SELECT * FROM staff WHERE pin = ?", (pin_try,)).fetchone()
-                                                if staff_match is None:
-                                                    st.error("PIN not recognized.")
-                                                    clear_pin_boxes(f"task_pin_{t['id']}")
-                                                else:
-                                                    week_val = db.get_week_start() if t["recurrence"] == "weekly" else None
-                                                    note_val = st.session_state.get(f"task_note_{t['id']}", "").strip() or None
-                                                    conn.execute(
-                                                        "INSERT INTO task_log (task_id, week_start_date, completed_by, completed_at, completion_note) VALUES (?, ?, ?, ?, ?)",
-                                                        (t["id"], week_val, staff_match["name"], datetime.now().strftime("%-I:%M %p"), note_val)
-                                                    )
-                                                    conn.commit()
-                                                    st.session_state.pending_pin_task = None
-                                                    st.rerun()
-                                        if st.button("Cancel", key=f"cancel_{t['id']}"):
-                                            st.session_state.pending_pin_task = None
-                                            st.rerun()
-                                    else:
-                                        if st.button("Mark complete", key=f"complete_{t['id']}"):
-                                            st.session_state.pending_pin_task = pending_key
-                                            st.rerun()
-                            conn.close()
+                                                week_val = db.get_week_start() if t["recurrence"] == "weekly" else None
+                                                note_val = st.session_state.get(f"task_note_{t['id']}", "").strip() or None
+                                                conn.execute(
+                                                    "INSERT INTO task_log (task_id, week_start_date, completed_by, completed_at, completion_note) VALUES (?, ?, ?, ?, ?)",
+                                                    (t["id"], week_val, staff_match["name"], datetime.now().strftime("%-I:%M %p"), note_val)
+                                                )
+                                                conn.commit()
+                                                st.session_state.pending_pin_task = None
+                                                st.rerun()
+                                    st.button("Cancel", key=f"cancel_{t['id']}",
+                                              on_click=_cancel_pending, args=(ck,))
+                        conn.close()
                     st.write("")
 
     # ---------------- ADD VIEW (owner only) ----------------

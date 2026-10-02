@@ -67,6 +67,41 @@ hr {{ margin: 0.8rem 0 !important; border-color: {N300} !important; }}
   border: 1px solid #d7cab1 !important;
   border-radius: 18px !important;
 }}
+/* Keyed containers — st.container(key=...) emits a stable .st-key-<key>
+   class, which survives Streamlit's DOM changes (the BorderWrapper testid
+   no longer exists in 1.63, which is why the shading never showed). */
+[class*="st-key-daycard-"] {{
+  background: {CARD} !important;
+  border: 1px solid #d7cab1 !important;
+  border-radius: 20px !important;
+  padding: 16px 14px 14px !important;
+  gap: 8px !important;
+  box-shadow: 0 1px 2px rgba(70,55,35,.06), 0 4px 14px rgba(70,55,35,.07) !important;
+}}
+[class*="st-key-task-open-"], [class*="st-key-task-done-"] {{
+  border-radius: 14px !important;
+  padding: 9px 12px 8px !important;
+  gap: 0 !important;
+}}
+[class*="st-key-task-open-"] {{
+  background: {CARD_INNER} !important;
+  border: 1px solid {N300} !important;
+}}
+[class*="st-key-task-done-"] {{
+  background: {N300} !important;
+  border: 1px solid transparent !important;
+}}
+[class*="st-key-task-"] [data-testid="stCheckbox"] p {{
+  font-size: 0.9rem !important; line-height: 1.3 !important; color: {INK} !important;
+}}
+[class*="st-key-task-done-"] [data-testid="stCheckbox"] p {{ color: {N700} !important; }}
+[class*="st-key-task-"] [data-testid="stCaptionContainer"] {{
+  font-size: 0.72rem !important; margin: 0 0 0 30px !important; color: {N700} !important;
+}}
+[class*="st-key-task-"] [data-testid="stBaseButton-tertiary"] {{
+  margin-left: 30px !important; min-height: 0 !important; padding: 2px 0 !important;
+  font-size: 0.72rem !important; color: {ACCENT_700} !important;
+}}
 /* a task card inside a day card: cream, so the nesting reads */
 [data-testid="stMainBlockContainer"] div[data-testid="stVerticalBlockBorderWrapper"]
   div[data-testid="stVerticalBlockBorderWrapper"] {{
@@ -295,4 +330,36 @@ def tag(label: str, tone: str = "neutral") -> str:
         f'<span style="display:inline-flex;align-items:center;font-size:0.72rem;'
         f'padding:3px 10px;border-radius:999px;background:{bg};color:{fg};'
         f'white-space:nowrap">{label}</span>'
+    )
+
+
+def day_header(name: str, datestr: str) -> str:
+    """Day name + date on one baseline row, as in the mock — replaces
+    st.subheader(day), which rendered the name alone at the wrong weight."""
+    return (
+        f'<div style="display:flex;align-items:baseline;gap:10px;margin:0 0 2px">'
+        f'<span style="flex:1;font-family:Nunito,sans-serif;font-weight:800;'
+        f'font-size:1.12rem;color:{INK};line-height:1.2">{name}</span>'
+        f'<span style="font-size:0.72rem;white-space:nowrap;color:{N700}">{datestr}</span>'
+        f'</div>'
+    )
+
+
+def done_row(who: str, when: str, note=None) -> str:
+    """One sage row for a completed task: filled tick, who, when, optional note.
+    Replaces the stacked st.success + st.info boxes."""
+    note_html = (
+        f'<div style="font-size:0.76rem;color:#4b5636;margin-top:3px">{note}</div>'
+        if note else ''
+    )
+    return (
+        f'<div style="display:flex;align-items:flex-start;gap:9px;padding:8px 11px;'
+        f'border-radius:12px;background:#e9ede1">'
+        f'<span style="flex:none;width:18px;height:18px;border-radius:999px;'
+        f'background:#7a8a5e;color:#fff;display:grid;place-items:center;'
+        f'font-size:10px;font-weight:700;line-height:1">&#10003;</span>'
+        f'<div style="flex:1;min-width:0">'
+        f'<div style="font-size:0.82rem;font-weight:700;color:#3f4a2c">{who}'
+        f'<span style="font-weight:400;color:#5c6a44"> &middot; {when}</span></div>'
+        f'{note_html}</div></div>'
     )
