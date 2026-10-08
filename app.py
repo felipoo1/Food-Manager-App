@@ -1472,7 +1472,7 @@ elif page == "Recipes":
 
     if page_header(
         "Recipes", "Costed from the master stock list. Costs include 9% GST.",
-        "New category" if st.session_state.recipe_mode == "categories" else None, key="newcat_btn",
+        "New category" if (is_owner and st.session_state.recipe_mode == "categories") else None, key="newcat_btn",
     ):
         st.session_state.recipe_mode = "add_category"
         st.rerun()
@@ -1508,17 +1508,21 @@ elif page == "Recipes":
         if not results:
             st.info(f"No recipes match \"{search_text}\".")
         else:
-            st.caption(f"{len(results)} recipe(s) match \"{search_text}\" — click a name to edit it.")
+            caption_suffix = " — click a name to edit it." if is_owner else ""
+            st.caption(f"{len(results)} recipe(s) match \"{search_text}\"{caption_suffix}")
             for r in results:
                 cost = db.compute_recipe_cost(r["id"])
                 with st.container(border=True):
                     cols = st.columns([3, 2, 3, 2])
                     with cols[0]:
-                        if st.button(r["name"], type="tertiary", key=f"search_recipe_{r['id']}"):
-                            st.session_state["edit_recipe_select"] = r["name"]
-                            st.session_state.recipe_active_category_id = r["category_id"]
-                            st.session_state.recipe_mode = "edit_recipe"
-                            st.rerun()
+                        if is_owner:
+                            if st.button(r["name"], type="tertiary", key=f"search_recipe_{r['id']}"):
+                                st.session_state["edit_recipe_select"] = r["name"]
+                                st.session_state.recipe_active_category_id = r["category_id"]
+                                st.session_state.recipe_mode = "edit_recipe"
+                                st.rerun()
+                        else:
+                            st.write(r["name"])
                     cols[1].write(f"**Type:** {r['type']}")
                     cols[2].write(f"**Category:** {r['category_name'] or '-'}")
                     cols[3].write(f"**Cost:** ${cost:.2f}")
@@ -1563,6 +1567,10 @@ elif page == "Recipes":
     # ADD CATEGORY
     # ======================================================
     elif st.session_state.recipe_mode == "add_category":
+        if not is_owner:
+            st.warning("Only owners can add categories.")
+            st.session_state.recipe_mode = "categories"
+            st.rerun()
         rtype = st.session_state.recipe_active_type
         st.subheader(f"New {rtype} Category")
 
@@ -1615,19 +1623,22 @@ elif page == "Recipes":
             st.subheader(category["name"])
             st.caption(f"{rtype} category")
         with head_col2:
-            if st.button("Add New Recipe", type="primary", width="stretch"):
+            if is_owner and st.button("Add New Recipe", type="primary", width="stretch"):
                 st.session_state.recipe_mode = "add_recipe"
                 st.rerun()
         with head_col3:
-            if st.button("Edit Category", width="stretch"):
+            if is_owner and st.button("Edit Category", width="stretch"):
                 st.session_state.recipe_mode = "edit_category"
                 st.rerun()
         with head_col4:
-            if st.button("Remove Category", width="stretch"):
+            if is_owner and st.button("Remove Category", width="stretch"):
                 st.session_state.recipe_mode = "remove_category"
                 st.rerun()
 
-        st.caption("Click a recipe name to edit it. Costs shown include 9% GST.")
+        if is_owner:
+            st.caption("Click a recipe name to edit it. Costs shown include 9% GST.")
+        else:
+            st.caption("Costs shown include 9% GST.")
 
         conn = db.get_connection()
         recipes_in_cat = conn.execute(
@@ -1643,10 +1654,13 @@ elif page == "Recipes":
                 with st.container(border=True):
                     cols = st.columns([3, 2, 2, 2])
                     with cols[0]:
-                        if st.button(r["name"], type="tertiary", key=f"recipe_name_{r['id']}"):
-                            st.session_state["edit_recipe_select"] = r["name"]
-                            st.session_state.recipe_mode = "edit_recipe"
-                            st.rerun()
+                        if is_owner:
+                            if st.button(r["name"], type="tertiary", key=f"recipe_name_{r['id']}"):
+                                st.session_state["edit_recipe_select"] = r["name"]
+                                st.session_state.recipe_mode = "edit_recipe"
+                                st.rerun()
+                        else:
+                            st.write(r["name"])
                     if rtype == "Prep":
                         cols[1].write(f"**Yields:** {r['yield_qty']:g}{r['yield_unit']}" if r["yield_qty"] else "**Yields:** -")
                         cols[2].write(f"**Batch cost:** ${cost:.2f}")
@@ -1667,6 +1681,10 @@ elif page == "Recipes":
     # EDIT CATEGORY
     # ======================================================
     elif st.session_state.recipe_mode == "edit_category":
+        if not is_owner:
+            st.warning("Only owners can edit categories.")
+            st.session_state.recipe_mode = "category_detail"
+            st.rerun()
         cat_id = st.session_state.recipe_active_category_id
         conn = db.get_connection()
         category = conn.execute("SELECT * FROM recipe_categories WHERE id = ?", (cat_id,)).fetchone()
@@ -1702,6 +1720,10 @@ elif page == "Recipes":
     # REMOVE CATEGORY
     # ======================================================
     elif st.session_state.recipe_mode == "remove_category":
+        if not is_owner:
+            st.warning("Only owners can remove categories.")
+            st.session_state.recipe_mode = "category_detail"
+            st.rerun()
         cat_id = st.session_state.recipe_active_category_id
         conn = db.get_connection()
         category = conn.execute("SELECT * FROM recipe_categories WHERE id = ?", (cat_id,)).fetchone()
@@ -1726,6 +1748,10 @@ elif page == "Recipes":
     # ADD RECIPE (within a category)
     # ======================================================
     elif st.session_state.recipe_mode == "add_recipe":
+        if not is_owner:
+            st.warning("Only owners can add recipes.")
+            st.session_state.recipe_mode = "category_detail"
+            st.rerun()
         cat_id = st.session_state.recipe_active_category_id
         conn = db.get_connection()
         category = conn.execute("SELECT * FROM recipe_categories WHERE id = ?", (cat_id,)).fetchone()
@@ -1769,6 +1795,11 @@ elif page == "Recipes":
     # EDIT RECIPE
     # ======================================================
     elif st.session_state.recipe_mode == "edit_recipe":
+        if not is_owner:
+            st.warning("Only owners can edit recipes.")
+            st.session_state.recipe_mode = "categories"
+            st.rerun()
+
         st.subheader("Edit a recipe")
 
         all_recipe_options = recipe_options()
