@@ -1164,13 +1164,15 @@ if page == "Master Stock List":
                                       and r["current_stock_qty"] < r["min_stock_qty"])
                             stock_chip = tag(f"{stock_display:g} {display_unit}",
                                              "alert" if is_low else "neutral")
+                        size_label = r["purchase_size_label"] or "no size set"
+                        price_meta = (f'{size_label} · ${r["purchase_price"]:.2f}' if r["purchase_price"] is not None else f'{size_label} · price not set')
                         st.markdown(card_html(r["name"], [
-                            (f'{r["purchase_size_label"]} · ${r["purchase_price"]:.2f}', "meta"),
+                            (price_meta, "meta"),
                             (f'${cost:.3f} / {r["recipe_unit_qty"]:g}{r["base_unit"]}', "strong"),
                             (r["primary_supplier_name"] or "No supplier set", "faint"),
                         ], stock_chip), unsafe_allow_html=True)
                         if st.button("Edit", type="tertiary", key=f"link-ing-{r['id']}"):
-                            st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
+                            st.session_state["edit_ingredient_select"] = f"{r['name']} ({size_label})"
                             st.session_state.stock_mode = "edit"
                             st.rerun()
 
@@ -1265,7 +1267,7 @@ if page == "Master Stock List":
         if not all_ingredients:
             st.info("No ingredients to edit yet.")
         else:
-            ingredient_labels = {f"{r['name']} ({r['purchase_size_label']})": r["id"] for r in all_ingredients}
+            ingredient_labels = {f"{r['name']} ({r['purchase_size_label'] or 'no size set'})": r["id"] for r in all_ingredients}
             selected_label = st.selectbox("Ingredient", list(ingredient_labels.keys()), key="edit_ingredient_select")
             selected_id = ingredient_labels[selected_label]
 
