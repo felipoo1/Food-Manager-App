@@ -1510,8 +1510,9 @@ elif page == "Recipes":
         else:
             caption_suffix = " — click a name to edit it." if is_owner else ""
             st.caption(f"{len(results)} recipe(s) match \"{search_text}\"{caption_suffix}")
+            costs = db.batch_compute_recipe_costs([r["id"] for r in results])
             for r in results:
-                cost = db.compute_recipe_cost(r["id"])
+                cost = costs.get(r["id"], 0.0)
                 with st.container(border=True):
                     cols = st.columns([3, 2, 3, 2])
                     with cols[0]:
@@ -1649,8 +1650,9 @@ elif page == "Recipes":
         if not recipes_in_cat:
             st.info("No recipes in this category yet. Click \"+ Add New Recipe\" above.")
         else:
+            costs = db.batch_compute_recipe_costs([r["id"] for r in recipes_in_cat])
             for r in recipes_in_cat:
-                cost = db.compute_recipe_cost(r["id"])
+                cost = costs.get(r["id"], 0.0)
                 with st.container(border=True):
                     cols = st.columns([3, 2, 2, 2])
                     with cols[0]:
@@ -1948,17 +1950,47 @@ elif page == "Recipes":
                 for line in lines:
                     line_cost = db.compute_line_cost(line, conn)
                     if line["ingredient_id"] is not None:
-                        label = f"{line['ingredient_name']} — {line['quantity']:g}{line['ingredient_unit']}"
+                        unit = line["ingredient_unit"]
+                        name = line["ingredient_name"]
                     else:
-                        label = f"{line['sub_recipe_name']} (Prep) — {line['quantity']:g}{line['sub_recipe_unit']}"
-                    row_col1, row_col2, row_col3 = st.columns([4, 2, 1])
+                        unit = line["sub_recipe_unit"]
+                        name = f"{line['sub_recipe_name']} (Prep)"
+                    label = f"{name} — {line['quantity']:g}{unit}"
+
+                    row_col1, row_col2, row_col3, row_col4 = st.columns([4, 2, 1, 1])
                     row_col1.write(label)
                     row_col2.write(f"${line_cost:.3f}")
-                    if row_col3.button("Remove", key=f"remove_line_{line['id']}"):
+
+                    # Edit quantity inline
+                    edit_key = f"edit_line_open_{line['id']}"
+                    if edit_key not in st.session_state:
+                        st.session_state[edit_key] = False
+
+                    if row_col3.button("Edit", key=f"edit_line_btn_{line['id']}"):
+                        st.session_state[edit_key] = not st.session_state[edit_key]
+
+                    if row_col4.button("Remove", key=f"remove_line_{line['id']}"):
                         conn.execute("DELETE FROM recipe_lines WHERE id = ?", (line["id"],))
                         conn.commit()
                         conn.close()
                         st.rerun()
+
+                    if st.session_state.get(edit_key):
+                        with st.form(f"edit_line_form_{line['id']}"):
+                            new_qty = st.number_input(
+                                f"New quantity ({unit})", min_value=0.001, step=0.5,
+                                value=float(line["quantity"]),
+                                key=f"edit_line_qty_{line['id']}"
+                            )
+                            if st.form_submit_button("Save"):
+                                conn.execute(
+                                    "UPDATE recipe_lines SET quantity = ? WHERE id = ?",
+                                    (new_qty, line["id"])
+                                )
+                                conn.commit()
+                                st.session_state[edit_key] = False
+                                conn.close()
+                                st.rerun()
                 conn.close()
 
             # Live cost summary

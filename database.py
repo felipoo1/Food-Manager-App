@@ -126,6 +126,30 @@ def get_connection():
 # Schema
 # =========================================================
 
+@st.cache_resource
+def _ping_supabase_to_prevent_pause():
+    """
+    Supabase free tier pauses projects after ~7 days of inactivity.
+    Our app connects via direct Postgres (not the REST API), which Supabase
+    doesn't count as "activity" — so it pauses anyway.
+    This function fires a lightweight REST API request on startup, which DOES
+    count as activity and resets the inactivity timer.
+    It is cached so it only runs once per process, not on every page load.
+    """
+    try:
+        import requests as _req
+        url = st.secrets.get("SUPABASE_URL", "")
+        key = st.secrets.get("SUPABASE_SERVICE_KEY", "")
+        if url and key:
+            _req.get(
+                f"{url}/rest/v1/suppliers?select=id&limit=1",
+                headers={"apikey": key, "Authorization": f"Bearer {key}"},
+                timeout=5
+            )
+    except Exception:
+        pass  # Never crash the app over a keepalive ping
+
+
 def init_db():
     """Creates all tables if they don't already exist. Safe to run every time the app starts."""
     conn = get_connection()
@@ -1258,6 +1282,78 @@ def convert_to_base_unit(recipe_id, quantity, chosen_unit, base_unit, conn=None)
         ratio = row["to_qty"] / row["from_qty"]
         return quantity * ratio
     return quantity
+
+
+def batch_compute_recipe_costs(recipe_ids):
+    """
+    Computes costs for a list of recipe IDs in bulk using only 2 DB queries
+    instead of N×M round-trips. Use this in list views (category_detail,
+    search results) for a major speed-up.
+
+    Returns {recipe_id: float_cost}.
+    Simple recipes only (no nested Prep sub-recipes in this fast path;
+    falls back to compute_recipe_cost for any sub-recipe lines).
+    """
+    if not recipe_ids:
+        return {}
+
+    conn = get_connection()
+    id_list = ",".join(str(int(rid)) for rid in recipe_ids)
+
+    # One query: all recipe lines for the requested recipes
+    lines = conn.execute(
+        f"SELECT * FROM recipe_lines WHERE parent_recipe_id IN ({id_list})"
+    ).fetchall()
+
+    # Collect ingredient ids referenced
+    ing_ids = list({l["ingredient_id"] for l in lines if l["ingredient_id"] is not None})
+
+    # One query: all ingredient prices
+    ing_data = {}
+    if ing_ids:
+        ilist = ",".join(str(int(i)) for i in ing_ids)
+        rows = conn.execute(
+            f"SELECT id, purchase_price, purchase_qty FROM ingredients WHERE id IN ({ilist})"
+        ).fetchall()
+        for r in rows:
+            if r["purchase_price"] and r["purchase_qty"]:
+                ing_data[r["id"]] = r["purchase_price"] / r["purchase_qty"]
+
+    conn.close()
+
+    # Group lines by recipe
+    recipe_lines = {rid: [] for rid in recipe_ids}
+    sub_recipe_ids = set()
+    for line in lines:
+        rid = line["parent_recipe_id"]
+        if rid in recipe_lines:
+            recipe_lines[rid].append(line)
+        if line["sub_recipe_id"] is not None:
+            sub_recipe_ids.add(line["sub_recipe_id"])
+
+    # For any sub-recipe lines fall back to individual compute (rare)
+    sub_costs = {sid: compute_recipe_cost(sid) for sid in sub_recipe_ids}
+
+    result = {}
+    for rid in recipe_ids:
+        total = 0.0
+        for line in recipe_lines[rid]:
+            if line["ingredient_id"] is not None:
+                cpu = ing_data.get(line["ingredient_id"], 0.0)
+                total += cpu * line["quantity"]
+            elif line["sub_recipe_id"] is not None:
+                sub_cost = sub_costs.get(line["sub_recipe_id"], 0.0)
+                # Get sub recipe yield to compute cost per unit
+                conn2 = get_connection()
+                sr = conn2.execute(
+                    "SELECT yield_qty FROM recipes WHERE id = ?", (line["sub_recipe_id"],)
+                ).fetchone()
+                conn2.close()
+                if sr and sr["yield_qty"]:
+                    total += (sub_cost / sr["yield_qty"]) * line["quantity"]
+        result[rid] = total
+
+    return result
 
 
 def compute_recipe_cost(recipe_id, conn=None, _visited=None):
