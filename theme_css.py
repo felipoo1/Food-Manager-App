@@ -104,21 +104,47 @@ hr {{ margin: 0.8rem 0 !important; border-color: {N300} !important; }}
 
 /* Streamlit gives markdown a negative bottom margin — inside our cards that
    pulled the next box up over the text. Zero it. */
-[class*="st-key-daycard-"] [data-testid="stMarkdown"],
-[class*="st-key-card-"] [data-testid="stMarkdown"],
-[class*="st-key-task-"] [data-testid="stMarkdown"],
-[class*="st-key-stock"] [data-testid="stMarkdown"] {{ margin: 0 !important; }}
-[class*="st-key-daycard-"] p, [class*="st-key-card-"] p, [class*="st-key-task-"] p {{ margin: 0 !important; }}
+:is([class*="st-key-daycard-"], [class*="st-key-card-"], [class*="st-key-stock"])
+  :is([data-testid="stElementContainer"], [data-testid="stMarkdown"],
+      [data-testid="stMarkdownContainer"], [data-testid="stMarkdownContainer"] > *,
+      [data-testid="stCaptionContainer"], [data-testid="stCheckbox"], p) {{
+  margin-top: 0 !important; margin-bottom: 0 !important;
+  height: auto !important; min-height: 0 !important;
+}}
+[class*="st-key-daycard-"] [data-testid="stMarkdownContainer"] > div:first-child {{ padding-bottom: 4px; }}
+
+/* Stacking fix: Streamlit lays these out as flex columns with its own
+   negative margins on markdown/caption, which pulled each block up over the
+   one above. Make our cards plain block flow and space children explicitly. */
+:is([class*="st-key-daycard-"], [class*="st-key-task-open-"], [class*="st-key-task-done-"], [class*="st-key-card-"]) {{
+  display: block !important;
+}}
+:is([class*="st-key-daycard-"], [class*="st-key-task-open-"], [class*="st-key-task-done-"], [class*="st-key-card-"]) > * {{
+  position: static !important; transform: none !important;
+  height: auto !important; min-height: 0 !important; flex: none !important;
+  margin: 0 0 8px 0 !important;
+}}
+:is([class*="st-key-task-open-"], [class*="st-key-task-done-"]) > * {{ margin-bottom: 3px !important; }}
+:is([class*="st-key-daycard-"], [class*="st-key-task-open-"], [class*="st-key-task-done-"], [class*="st-key-card-"]) > *:last-child {{
+  margin-bottom: 0 !important;
+}}
+:is([class*="st-key-daycard-"], [class*="st-key-task-"], [class*="st-key-card-"])
+  :is([data-testid="stElementContainer"], [data-testid="stMarkdown"], [data-testid="stMarkdownContainer"],
+      [data-testid="stCaptionContainer"], [data-testid="stCheckbox"], [data-testid="stButton"], label, p) {{
+  margin-top: 0 !important; margin-bottom: 0 !important; position: static !important;
+  height: auto !important;
+}}
 
 /* task rows */
 [class*="st-key-task-"] [data-testid="stCheckbox"] p {{
   font-size: 0.9rem !important; line-height: 1.3 !important; color: {INK} !important;
 }}
 [class*="st-key-task-done-"] [data-testid="stCheckbox"] p {{ color: {N700} !important; }}
-[class*="st-key-task-"] [data-testid="stCaptionContainer"],
-[class*="st-key-task-"] [data-testid="stCaptionContainer"] p {{
-  font-size: 0.72rem !important; line-height: 1.3 !important; color: {N700} !important;
+[class*="st-key-task-"] [data-testid="stCaptionContainer"] {{
   padding-left: 1.65rem !important;
+}}
+[class*="st-key-task-"] [data-testid="stCaptionContainer"] p {{
+  font-size: 0.72rem !important; line-height: 1.35 !important; color: {N700} !important;
 }}
 [data-testid="stCheckbox"] label[data-baseweb="checkbox"] > span:first-child {{
   border-radius: 999px !important; border: 2px solid {N400} !important; background: transparent !important;
@@ -133,7 +159,7 @@ hr {{ margin: 0.8rem 0 !important; border-color: {N300} !important; }}
   min-height: 0 !important; padding: 0 !important; border: 0 !important; background: none !important;
   font-size: 0.75rem !important; font-weight: 700 !important; color: {ACCENT_700} !important;
 }}
-[class*="st-key-task-"] [class*="st-key-link-"] {{ padding-left: 1.65rem !important; }}
+[class*="st-key-task-"] [class*="st-key-link-"] {{ padding-left: 1.65rem !important; margin-top: 2px !important; }}
 [class*="st-key-link-"] button:hover {{ text-decoration: underline !important; }}
 
 /* card title buttons (recipe categories) */

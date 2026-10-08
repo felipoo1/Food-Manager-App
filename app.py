@@ -724,12 +724,14 @@ if page == "Tasks":
                 if True:
                     day_tasks = [t for t in all_task_defs if t["day_of_week"] == day]
                     with st.container(key=f"daycard-{day}"):
+                        _empty = (
+                            '<div style="font-size:0.78rem;color:#645c50;margin-top:4px">'
+                            'No tasks assigned to this day.</div>'
+                        ) if not day_tasks else ''
                         st.markdown(
-                            day_header(day, DAY_DATES.get(day, "")),
+                            day_header(day, DAY_DATES.get(day, "")) + _empty,
                             unsafe_allow_html=True,
                         )
-                        if not day_tasks:
-                            st.caption("No tasks assigned to this day.")
                         conn = db.get_connection()
                         for t in sorted(day_tasks, key=lambda x: (x["section"] != "Kitchen", x["title"])):
                             pending_key = f"{t['id']}-pending"
