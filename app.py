@@ -454,6 +454,8 @@ is_owner = current_user["role"] == "owner"
 # Palette, type, pill nav, cards, tables and tick-boxes live in theme_css.py
 # and in .streamlit/config.toml. Do not add page-level <style> blocks here —
 # they fight the theme.
+import importlib, theme_css as _theme_css
+importlib.reload(_theme_css)  # Streamlit keeps a stale copy across uploads otherwise
 from theme_css import (inject_theme, tag, day_header, page_header, card_html,
                        section_head, recipe_stats_html, price_check_html)
 inject_theme()
