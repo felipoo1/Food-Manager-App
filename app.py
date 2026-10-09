@@ -454,7 +454,8 @@ is_owner = current_user["role"] == "owner"
 # Palette, type, pill nav, cards, tables and tick-boxes live in theme_css.py
 # and in .streamlit/config.toml. Do not add page-level <style> blocks here —
 # they fight the theme.
-from theme_css import inject_theme, tag, day_header, page_header, card_html
+from theme_css import (inject_theme, tag, day_header, page_header, card_html,
+                       section_head, recipe_stats_html, price_check_html)
 inject_theme()
 
 
@@ -1164,15 +1165,13 @@ if page == "Master Stock List":
                                       and r["current_stock_qty"] < r["min_stock_qty"])
                             stock_chip = tag(f"{stock_display:g} {display_unit}",
                                              "alert" if is_low else "neutral")
-                        size_label = r["purchase_size_label"] or "no size set"
-                        price_meta = (f'{size_label} · ${r["purchase_price"]:.2f}' if r["purchase_price"] is not None else f'{size_label} · price not set')
                         st.markdown(card_html(r["name"], [
-                            (price_meta, "meta"),
+                            (f'{r["purchase_size_label"]} · ${r["purchase_price"]:.2f}', "meta"),
                             (f'${cost:.3f} / {r["recipe_unit_qty"]:g}{r["base_unit"]}', "strong"),
                             (r["primary_supplier_name"] or "No supplier set", "faint"),
                         ], stock_chip), unsafe_allow_html=True)
                         if st.button("Edit", type="tertiary", key=f"link-ing-{r['id']}"):
-                            st.session_state["edit_ingredient_select"] = f"{r['name']} ({size_label})"
+                            st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
                             st.session_state.stock_mode = "edit"
                             st.rerun()
 
@@ -1267,7 +1266,7 @@ if page == "Master Stock List":
         if not all_ingredients:
             st.info("No ingredients to edit yet.")
         else:
-            ingredient_labels = {f"{r['name']} ({r['purchase_size_label'] or 'no size set'})": r["id"] for r in all_ingredients}
+            ingredient_labels = {f"{r['name']} ({r['purchase_size_label']})": r["id"] for r in all_ingredients}
             selected_label = st.selectbox("Ingredient", list(ingredient_labels.keys()), key="edit_ingredient_select")
             selected_id = ingredient_labels[selected_label]
 
@@ -1472,7 +1471,7 @@ elif page == "Recipes":
 
     if page_header(
         "Recipes", "Costed from the master stock list. Costs include 9% GST.",
-        "New category" if (is_owner and st.session_state.recipe_mode == "categories") else None, key="newcat_btn",
+        "New category" if st.session_state.recipe_mode == "categories" else None, key="newcat_btn",
     ):
         st.session_state.recipe_mode = "add_category"
         st.rerun()
@@ -1508,22 +1507,17 @@ elif page == "Recipes":
         if not results:
             st.info(f"No recipes match \"{search_text}\".")
         else:
-            caption_suffix = " — click a name to edit it." if is_owner else ""
-            st.caption(f"{len(results)} recipe(s) match \"{search_text}\"{caption_suffix}")
-            costs = db.batch_compute_recipe_costs([r["id"] for r in results])
+            st.caption(f"{len(results)} recipe(s) match \"{search_text}\" — click a name to edit it.")
             for r in results:
-                cost = costs.get(r["id"], 0.0)
+                cost = db.compute_recipe_cost(r["id"])
                 with st.container(border=True):
                     cols = st.columns([3, 2, 3, 2])
                     with cols[0]:
-                        if is_owner:
-                            if st.button(r["name"], type="tertiary", key=f"search_recipe_{r['id']}"):
-                                st.session_state["edit_recipe_select"] = r["name"]
-                                st.session_state.recipe_active_category_id = r["category_id"]
-                                st.session_state.recipe_mode = "edit_recipe"
-                                st.rerun()
-                        else:
-                            st.write(r["name"])
+                        if st.button(r["name"], type="tertiary", key=f"search_recipe_{r['id']}"):
+                            st.session_state["edit_recipe_select"] = r["name"]
+                            st.session_state.recipe_active_category_id = r["category_id"]
+                            st.session_state.recipe_mode = "edit_recipe"
+                            st.rerun()
                     cols[1].write(f"**Type:** {r['type']}")
                     cols[2].write(f"**Category:** {r['category_name'] or '-'}")
                     cols[3].write(f"**Cost:** ${cost:.2f}")
@@ -1568,10 +1562,6 @@ elif page == "Recipes":
     # ADD CATEGORY
     # ======================================================
     elif st.session_state.recipe_mode == "add_category":
-        if not is_owner:
-            st.warning("Only owners can add categories.")
-            st.session_state.recipe_mode = "categories"
-            st.rerun()
         rtype = st.session_state.recipe_active_type
         st.subheader(f"New {rtype} Category")
 
@@ -1624,22 +1614,19 @@ elif page == "Recipes":
             st.subheader(category["name"])
             st.caption(f"{rtype} category")
         with head_col2:
-            if is_owner and st.button("Add New Recipe", type="primary", width="stretch"):
+            if st.button("Add New Recipe", type="primary", width="stretch"):
                 st.session_state.recipe_mode = "add_recipe"
                 st.rerun()
         with head_col3:
-            if is_owner and st.button("Edit Category", width="stretch"):
+            if st.button("Edit Category", width="stretch"):
                 st.session_state.recipe_mode = "edit_category"
                 st.rerun()
         with head_col4:
-            if is_owner and st.button("Remove Category", width="stretch"):
+            if st.button("Remove Category", width="stretch"):
                 st.session_state.recipe_mode = "remove_category"
                 st.rerun()
 
-        if is_owner:
-            st.caption("Click a recipe name to edit it. Costs shown include 9% GST.")
-        else:
-            st.caption("Costs shown include 9% GST.")
+        st.caption("Click a recipe name to edit it. Costs shown include 9% GST.")
 
         conn = db.get_connection()
         recipes_in_cat = conn.execute(
@@ -1650,19 +1637,15 @@ elif page == "Recipes":
         if not recipes_in_cat:
             st.info("No recipes in this category yet. Click \"+ Add New Recipe\" above.")
         else:
-            costs = db.batch_compute_recipe_costs([r["id"] for r in recipes_in_cat])
             for r in recipes_in_cat:
-                cost = costs.get(r["id"], 0.0)
+                cost = db.compute_recipe_cost(r["id"])
                 with st.container(border=True):
                     cols = st.columns([3, 2, 2, 2])
                     with cols[0]:
-                        if is_owner:
-                            if st.button(r["name"], type="tertiary", key=f"recipe_name_{r['id']}"):
-                                st.session_state["edit_recipe_select"] = r["name"]
-                                st.session_state.recipe_mode = "edit_recipe"
-                                st.rerun()
-                        else:
-                            st.write(r["name"])
+                        if st.button(r["name"], type="tertiary", key=f"recipe_name_{r['id']}"):
+                            st.session_state["edit_recipe_select"] = r["name"]
+                            st.session_state.recipe_mode = "edit_recipe"
+                            st.rerun()
                     if rtype == "Prep":
                         cols[1].write(f"**Yields:** {r['yield_qty']:g}{r['yield_unit']}" if r["yield_qty"] else "**Yields:** -")
                         cols[2].write(f"**Batch cost:** ${cost:.2f}")
@@ -1683,10 +1666,6 @@ elif page == "Recipes":
     # EDIT CATEGORY
     # ======================================================
     elif st.session_state.recipe_mode == "edit_category":
-        if not is_owner:
-            st.warning("Only owners can edit categories.")
-            st.session_state.recipe_mode = "category_detail"
-            st.rerun()
         cat_id = st.session_state.recipe_active_category_id
         conn = db.get_connection()
         category = conn.execute("SELECT * FROM recipe_categories WHERE id = ?", (cat_id,)).fetchone()
@@ -1722,10 +1701,6 @@ elif page == "Recipes":
     # REMOVE CATEGORY
     # ======================================================
     elif st.session_state.recipe_mode == "remove_category":
-        if not is_owner:
-            st.warning("Only owners can remove categories.")
-            st.session_state.recipe_mode = "category_detail"
-            st.rerun()
         cat_id = st.session_state.recipe_active_category_id
         conn = db.get_connection()
         category = conn.execute("SELECT * FROM recipe_categories WHERE id = ?", (cat_id,)).fetchone()
@@ -1750,10 +1725,6 @@ elif page == "Recipes":
     # ADD RECIPE (within a category)
     # ======================================================
     elif st.session_state.recipe_mode == "add_recipe":
-        if not is_owner:
-            st.warning("Only owners can add recipes.")
-            st.session_state.recipe_mode = "category_detail"
-            st.rerun()
         cat_id = st.session_state.recipe_active_category_id
         conn = db.get_connection()
         category = conn.execute("SELECT * FROM recipe_categories WHERE id = ?", (cat_id,)).fetchone()
@@ -1797,11 +1768,6 @@ elif page == "Recipes":
     # EDIT RECIPE
     # ======================================================
     elif st.session_state.recipe_mode == "edit_recipe":
-        if not is_owner:
-            st.warning("Only owners can edit recipes.")
-            st.session_state.recipe_mode = "categories"
-            st.rerun()
-
         st.subheader("Edit a recipe")
 
         all_recipe_options = recipe_options()
@@ -1941,81 +1907,93 @@ elif page == "Recipes":
                         st.success("Conversion added.")
                         st.rerun()
 
-            st.markdown("---")
-            st.write(f"**Current ingredients in {recipe['name']}:**")
-            if not lines:
-                st.write("No ingredients added yet.")
-            else:
-                conn = db.get_connection()
-                for line in lines:
-                    line_cost = db.compute_line_cost(line, conn)
-                    if line["ingredient_id"] is not None:
-                        unit = line["ingredient_unit"]
-                        name = line["ingredient_name"]
-                    else:
-                        unit = line["sub_recipe_unit"]
-                        name = f"{line['sub_recipe_name']} (Prep)"
-                    label = f"{name} — {line['quantity']:g}{unit}"
-
-                    row_col1, row_col2, row_col3, row_col4 = st.columns([4, 2, 1, 1])
-                    row_col1.write(label)
-                    row_col2.write(f"${line_cost:.3f}")
-
-                    # Edit quantity inline
-                    edit_key = f"edit_line_open_{line['id']}"
-                    if edit_key not in st.session_state:
-                        st.session_state[edit_key] = False
-
-                    if row_col3.button("Edit", key=f"edit_line_btn_{line['id']}"):
-                        st.session_state[edit_key] = not st.session_state[edit_key]
-
-                    if row_col4.button("Remove", key=f"remove_line_{line['id']}"):
-                        conn.execute("DELETE FROM recipe_lines WHERE id = ?", (line["id"],))
-                        conn.commit()
-                        conn.close()
-                        st.rerun()
-
-                    if st.session_state.get(edit_key):
-                        with st.form(f"edit_line_form_{line['id']}"):
-                            new_qty = st.number_input(
-                                f"New quantity ({unit})", min_value=0.001, step=0.5,
-                                value=float(line["quantity"]),
-                                key=f"edit_line_qty_{line['id']}"
-                            )
-                            if st.form_submit_button("Save"):
-                                conn.execute(
-                                    "UPDATE recipe_lines SET quantity = ? WHERE id = ?",
-                                    (new_qty, line["id"])
-                                )
-                                conn.commit()
-                                st.session_state[edit_key] = False
-                                conn.close()
-                                st.rerun()
-                conn.close()
-
-            # Live cost summary
-            live_cost = db.compute_recipe_cost(selected_recipe_id)
-            if recipe["type"] == "Prep":
-                st.info(
-                    f"Batch cost (incl. 9% GST): ${live_cost:.2f}  |  "
-                    f"Cost per {recipe['yield_unit']}: "
-                    f"${(live_cost / recipe['yield_qty']) if recipe['yield_qty'] else 0:.4f}"
-                )
-            else:
-                if recipe["selling_price"]:
-                    pct = live_cost / recipe["selling_price"] * 100
-                    status = db.food_cost_status(pct)
-                    badge = {"ok": "🟢", "warning": "🟡", "alert": "🔴"}[status]
-                    st.info(f"Total cost (incl. 9% GST): ${live_cost:.2f}  |  Selling price: ${recipe['selling_price']:.2f}  |  {badge} **{pct:.1f}% food cost**")
-                    if status == "alert":
-                        st.error("⚠️ This recipe is at or above the 30% food cost alert threshold.")
-                    elif status == "warning":
-                        st.warning("This recipe is above the 25% target food cost.")
+            # ---- Costing: stat tiles, ingredient table, price check (matches mock) ----
+            conn = db.get_connection()
+            costed = []
+            for line in lines:
+                lc = db.compute_line_cost(line, conn) or 0
+                if line["ingredient_id"] is not None:
+                    costed.append((line, line["ingredient_name"], f"{line['quantity']:g} {line['ingredient_unit']}", lc, False))
                 else:
-                    st.info(f"Total cost (incl. 9% GST): ${live_cost:.2f}  |  No selling price set yet.")
+                    costed.append((line, line["sub_recipe_name"], f"{line['quantity']:g} {line['sub_recipe_unit']}", lc, True))
+            conn.close()
+            live_cost = db.compute_recipe_cost(selected_recipe_id) or 0
+            is_prep = recipe["type"] == "Prep"
+            portions = recipe["portions"] if recipe["portions"] and recipe["portions"] > 0 else None
+            per_portion = live_cost / portions if portions else live_cost
+            price = recipe["selling_price"] or 0
 
-                if recipe["portions"] and recipe["portions"] > 0:
-                    st.caption(f"Cost per portion (÷ {recipe['portions']:g} portions): ${live_cost / recipe['portions']:.3f}")
+            st.markdown(recipe_stats_html(
+                recipe, live_cost, per_portion, price, len(costed), is_prep
+            ), unsafe_allow_html=True)
+
+            st.markdown(section_head(
+                "Ingredients",
+                "Whole batch · prices incl. 9% GST" if is_prep else "Per recipe · prices incl. 9% GST",
+            ), unsafe_allow_html=True)
+
+            with st.container(key="costtable"):
+                if not costed:
+                    st.caption("No ingredients added yet — add one below.")
+                else:
+                    CC = [5, 2, 2, 2, 1]
+                    with st.container(key="costhead"):
+                        h = st.columns(CC, vertical_alignment="center")
+                        for col, label in zip(h, ["Ingredient", "Qty", "Line cost", "Share", ""]):
+                            col.markdown(label)
+                    for line, name, qty, lc, sub in costed:
+                        share = (lc / live_cost * 100) if live_cost else 0
+                        with st.container(key=f"costrow-{line['id']}"):
+                            c1, c2, c3, c4, c5 = st.columns(CC, vertical_alignment="center")
+                            prep_chip = " " + tag("Prep", "ok") if sub else ""
+                            warn = (
+                                '<div style="font-size:0.72rem;color:#8c491a">No price on this ingredient</div>'
+                                if lc == 0 else ""
+                            )
+                            c1.markdown(
+                                f'<div style="font-weight:700;font-size:0.9rem;line-height:1.3">{name}{prep_chip}</div>{warn}',
+                                unsafe_allow_html=True,
+                            )
+                            c2.markdown(f'<span style="font-size:0.86rem;color:#645c50">{qty}</span>', unsafe_allow_html=True)
+                            c3.markdown(f'<span style="font-size:0.9rem;font-weight:700">${lc:.2f}</span>', unsafe_allow_html=True)
+                            bar = "#c67139" if share >= 40 else "#82796a"
+                            c4.markdown(
+                                f'<div style="display:flex;align-items:center;gap:6px">'
+                                f'<div style="flex:1;max-width:56px;height:6px;border-radius:999px;background:#dcd3c4;overflow:hidden">'
+                                f'<div style="height:100%;width:{share:.0f}%;background:{bar};border-radius:999px"></div></div>'
+                                f'<span style="font-size:0.75rem;color:#645c50">{share:.0f}%</span></div>',
+                                unsafe_allow_html=True,
+                            )
+                            with c5:
+                                if st.button("Remove", type="tertiary", key=f"link-rmline-{line['id']}"):
+                                    c = db.get_connection()
+                                    c.execute("DELETE FROM recipe_lines WHERE id = ?", (line["id"],))
+                                    c.commit()
+                                    c.close()
+                                    st.rerun()
+                    st.markdown(
+                        f'<div style="display:flex;align-items:baseline;gap:10px;padding:10px 0 4px;border-top:1px solid #dcd3c4">'
+                        f'<span style="flex:1;font-weight:700">{"Batch cost" if is_prep else ("Cost per portion" if portions else "Total cost")}</span>'
+                        f'<span style="font-family:Nunito,sans-serif;font-weight:800;font-size:1.15rem">'
+                        f'${(live_cost if is_prep else per_portion):.2f}</span></div>',
+                        unsafe_allow_html=True,
+                    )
+
+            if not is_prep:
+                with st.container(key="pricecheck"):
+                    st.markdown(section_head("Price check", ""), unsafe_allow_html=True)
+                    try_price = st.number_input(
+                        "Selling price (incl. GST) $", min_value=0.0, step=0.5,
+                        value=float(price), key=f"pricecheck_{selected_recipe_id}",
+                    )
+                    st.markdown(price_check_html(per_portion, try_price), unsafe_allow_html=True)
+                    if try_price != float(price):
+                        if st.button("Save this price", type="primary", key=f"save_price_{selected_recipe_id}"):
+                            c = db.get_connection()
+                            c.execute("UPDATE recipes SET selling_price=? WHERE id=?", (try_price, selected_recipe_id))
+                            c.commit()
+                            c.close()
+                            st.rerun()
 
             st.write("**Add an ingredient or Prep recipe to this:**")
             component_type_choices = ["Raw ingredient"]

@@ -135,6 +135,21 @@ hr {{ margin: 0.8rem 0 !important; border-color: {N300} !important; }}
   height: auto !important;
 }}
 
+/* recipe costing: ingredient table + price check, same box as stock take */
+[class*="st-key-costtable"], [class*="st-key-pricecheck"] {{
+  background: {CARD} !important; border-radius: 20px !important; padding: 8px 18px 12px !important; gap: 0 !important;
+}}
+[class*="st-key-pricecheck"] {{ padding: 16px 18px !important; gap: 10px !important; max-width: 520px; }}
+[class*="st-key-costrow-"] {{ border-top: 1px solid {N300} !important; padding: 7px 0 !important; }}
+[class*="st-key-costhead"] {{ padding: 8px 0 6px !important; }}
+[class*="st-key-costhead"] p {{
+  font-size: 0.7rem !important; font-weight: 700 !important; letter-spacing: .08em !important;
+  text-transform: uppercase !important; color: {N700} !important; margin: 0 !important;
+}}
+:is([class*="st-key-costtable"], [class*="st-key-pricecheck"]) [data-testid="stMarkdown"],
+:is([class*="st-key-costtable"], [class*="st-key-pricecheck"]) p {{ margin: 0 !important; }}
+[class*="st-key-pricecheck"] [data-testid="stNumberInput"] input {{ background: {N100} !important; font-weight: 700 !important; }}
+
 /* task rows */
 [class*="st-key-task-"] [data-testid="stCheckbox"] p {{
   font-size: 0.9rem !important; line-height: 1.3 !important; color: {INK} !important;
@@ -494,4 +509,81 @@ def card_html(title: str, lines, chip: str = "") -> str:
         f'<div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:2px">'
         f'<div style="flex:1;min-width:0;font-family:Nunito,sans-serif;font-weight:800;'
         f'font-size:1.02rem;line-height:1.25;color:{INK}">{title}</div>{chip}</div>{body}'
+    )
+
+
+def section_head(title: str, note: str = "") -> str:
+    """H2 in the display face with a small note that wraps under it on narrow screens."""
+    note_html = (f'<span style="font-size:0.8rem;white-space:nowrap;color:{N700}">{note}</span>' if note else "")
+    return (
+        f'<div style="display:flex;flex-wrap:wrap;align-items:baseline;column-gap:12px;row-gap:2px;margin:14px 0 6px">'
+        f'<span style="flex:1;font-family:Nunito,sans-serif;font-weight:800;font-size:1.3rem;color:{INK}">{title}</span>'
+        f'{note_html}</div>'
+    )
+
+
+def _tile(k, v, sub, bg, fg, lab):
+    return (
+        f'<div style="display:flex;flex-direction:column;gap:2px;padding:14px 18px;background:{bg};border-radius:20px">'
+        f'<div style="font-size:0.7rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:{lab}">{k}</div>'
+        f'<div style="font-family:Nunito,sans-serif;font-weight:800;font-size:1.65rem;line-height:1.15;color:{fg}">{v}</div>'
+        f'<div style="font-size:0.75rem;color:{lab}">{sub}</div></div>'
+    )
+
+
+TARGET_FOOD_COST = 30
+
+
+def recipe_stats_html(recipe, total, per_portion, price, n_lines, is_prep) -> str:
+    """The tiles across the top of a recipe's costing view."""
+    tiles = []
+    if is_prep:
+        yq, yu = recipe["yield_qty"], recipe["yield_unit"] or ""
+        per_unit = total / yq if yq else 0
+        tiles.append(_tile("Batch cost", f"${total:.2f}", f"{n_lines} ingredients", CARD, INK, N700))
+        tiles.append(_tile("Yield", f"{yq:g} {yu}" if yq else "Not set", "Production quantity", CARD, INK, N700))
+        tiles.append(_tile(f"Cost / {yu or 'unit'}", f"${per_unit:.4f}", "Used by dishes", N800, N100, N300))
+    else:
+        tiles.append(_tile("Cost / portion", f"${per_portion:.2f}", f"{n_lines} ingredients", CARD, INK, N700))
+        tiles.append(_tile("Selling price", f"${price:.2f}" if price else "Not set",
+                           f"${price / 1.09:.2f} ex GST" if price else "Add one below", CARD, INK, N700))
+        if price:
+            fc = per_portion / price * 100
+            over = fc > TARGET_FOOD_COST
+            bg, fg, lab = (ACCENT_100, "#6b3613", ACCENT_700) if over else ("#e9ede1", "#3f4a2c", "#4b5636")
+            tiles.append(_tile("Food cost", f"{fc:.1f}%", f"Target {TARGET_FOOD_COST}% or under", bg, fg, lab))
+            gp = price - per_portion
+            tiles.append(_tile("Gross profit", f"${gp:.2f}", f"{gp / price * 100:.0f}% margin", N800, N100, N300))
+    return (
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:6px 0 4px">'
+        + "".join(tiles) + "</div>"
+    )
+
+
+def price_check_html(cost, price) -> str:
+    """GST breakdown + verdict under the price input."""
+    if price <= 0:
+        return f'<div style="font-size:0.85rem;color:{N700}">Enter a selling price to see food cost and margin.</div>'
+    ex = price / 1.09
+    rows = [("Price ex GST", f"${ex:.2f}"), ("GST (9%)", f"${price - ex:.2f}"),
+            ("Ingredient cost", f"− ${cost:.2f}"), ("Gross profit", f"${price - cost:.2f}")]
+    body = "".join(
+        f'<div style="display:flex;gap:12px;font-size:0.9rem;padding:2px 0"><span style="flex:1;color:{N700}">{k}</span>'
+        f'<span style="font-weight:700">{v}</span></div>' for k, v in rows
+    )
+    fc = cost / price * 100
+    target_price = cost / (TARGET_FOOD_COST / 100) if cost else 0
+    if fc > TARGET_FOOD_COST:
+        bg, fg = ACCENT_100, "#6b3613"
+        head = f"Food cost is above {TARGET_FOOD_COST}%"
+        sub = f"Raise the price to ${target_price:.2f} or trim the costliest ingredient."
+    else:
+        bg, fg = "#e9ede1", "#3f4a2c"
+        head = f"Within the {TARGET_FOOD_COST}% target"
+        sub = (f"You could go down to ${target_price:.2f} before food cost passes {TARGET_FOOD_COST}%."
+               if cost else "No ingredient costs yet — check prices on the Master Stock List.")
+    return (
+        f'{body}<div style="margin-top:8px;padding:12px 14px;border-radius:14px;background:{bg};color:{fg}">'
+        f'<div style="font-weight:700;font-size:0.88rem">{head}</div>'
+        f'<div style="font-size:0.8rem;line-height:1.4;margin-top:2px">{sub}</div></div>'
     )
