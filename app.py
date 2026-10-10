@@ -457,7 +457,9 @@ is_owner = current_user["role"] == "owner"
 import importlib, theme_css as _theme_css
 importlib.reload(_theme_css)  # Streamlit keeps a stale copy across uploads otherwise
 from theme_css import (inject_theme, tag, day_header, page_header, card_html,
-                       section_head, recipe_stats_html, price_check_html)
+                       section_head, recipe_stats_html, price_check_html,
+                       newitems_head_html, newitem_head_html, unit_cost_strip_html,
+                       skip_note_html, NEW_TODO_BORDER, N700 as N700_HEX)
 inject_theme()
 
 
@@ -3751,89 +3753,175 @@ elif page == "Invoices":
                 result = _try_parse(description)
             return result if result is not None else (1.0, "Each")
 
-        for idx, row in enumerate(scan["rows"]):
+        import difflib, html as _html
+
+        def _suggest(desc, names, n=2):
+            d = desc.lower()
+            scored = sorted(((difflib.SequenceMatcher(None, d, nm.lower()).ratio(), nm) for nm in names), reverse=True)
+            return [(nm, int(r * 100)) for r, nm in scored[:n] if r >= 0.4]
+
+        def _nice_name(desc):
+            s = desc.strip().lower()
+            return s[:1].upper() + s[1:]
+
+        MODE_CREATE, MODE_MATCH, MODE_SKIP = "Create new", "Match", "Skip"
+        new_idx = [i for i, r in enumerate(scan["rows"]) if r["status"] == "unmatched"]
+        matched_idx = [i for i, r in enumerate(scan["rows"]) if r["status"] != "unmatched"]
+        supplier_label = scan.get("supplier_matched") or scan.get("supplier_input") or "this supplier"
+
+        def _is_sorted(i):
+            mode = st.session_state.get(f"inv_mode_{i}")
+            if mode == MODE_MATCH:
+                return bool(st.session_state.get(f"inv_match_pick_{i}"))
+            return mode in (MODE_CREATE, MODE_SKIP)
+
+        def _create_rest():
+            for i in new_idx:
+                if not _is_sorted(i):
+                    st.session_state[f"inv_mode_{i}"] = MODE_CREATE
+
+        def _pick(i, name):
+            st.session_state[f"inv_mode_{i}"] = MODE_MATCH
+            st.session_state[f"inv_match_pick_{i}"] = name
+
+        def _set_mode(i, mode):
+            st.session_state[f"inv_mode_{i}"] = mode
+
+        unsorted_count = 0
+        if new_idx:
+            sorted_n = sum(1 for i in new_idx if _is_sorted(i))
+            unsorted_count = len(new_idx) - sorted_n
+            hl, hr = st.columns([7, 3], vertical_alignment="bottom")
+            with hl:
+                st.markdown(newitems_head_html(len(new_idx), sorted_n), unsafe_allow_html=True)
+            with hr:
+                with st.container(horizontal=True, horizontal_alignment="right"):
+                    st.button("Create the rest as new", key="inv_create_rest", on_click=_create_rest,
+                              disabled=unsorted_count == 0)
+            todo = [i for i in new_idx if not _is_sorted(i)]
+            if todo:
+                st.markdown("<style>" + "".join(
+                    f".st-key-newcard-{i}{{border-color:{NEW_TODO_BORDER} !important}}" for i in todo
+                ) + "</style>", unsafe_allow_html=True)
+
+            with st.container(key="grid2-newitems"):
+                for idx in new_idx:
+                    row = scan["rows"][idx]
+                    parsed_qty, parsed_unit = parse_pack_size(row["pack_size"], row["description"])
+                    unit_price = row.get("unit_price", row["new_price"])
+                    done = _is_sorted(idx)
+                    mode = st.session_state.get(f"inv_mode_{idx}")
+                    status = ("Skipped", "neutral") if (done and mode == MODE_SKIP) else (("Sorted", "ok") if done else ("To sort", "alert"))
+                    with st.container(key=f"newcard-{idx}"):
+                        st.markdown(newitem_head_html(
+                            row["description"],
+                            f"{parsed_qty:g} {parsed_unit} · ${unit_price:.2f} per {parsed_unit}",
+                            f"${unit_price * parsed_qty:.2f}", status[0], status[1]
+                        ), unsafe_allow_html=True)
+                        with st.container(key=f"seg-{idx}"):
+                            st.segmented_control(
+                                "How to handle", [MODE_CREATE, MODE_MATCH, MODE_SKIP],
+                                key=f"inv_mode_{idx}", label_visibility="collapsed"
+                            )
+                        mode = st.session_state.get(f"inv_mode_{idx}")
+
+                        if mode is None:
+                            sugs = _suggest(row["description"], all_ingredient_names)
+                            if sugs:
+                                st.markdown(f'<div style="font-size:0.75rem;font-weight:600;color:{N700_HEX}">Closest in Master Stock</div>', unsafe_allow_html=True)
+                                with st.container(key=f"sugs-{idx}", horizontal=True):
+                                    for j, (nm, pct) in enumerate(sugs):
+                                        st.button(f"{nm}  ·  {pct}% match", key=f"sug-{idx}-{j}",
+                                                  on_click=_pick, args=(idx, nm))
+                            else:
+                                with st.container(key=f"nomatch-{idx}", horizontal=True, vertical_alignment="center"):
+                                    st.markdown("Nothing close in Master Stock.")
+                                    st.button("Create it", key=f"link-create-{idx}", on_click=_set_mode, args=(idx, MODE_CREATE))
+
+                        elif mode == MODE_CREATE:
+                            unit_keys = list(INV_UNIT_MAP.keys())
+                            default_unit_idx = unit_keys.index(parsed_unit) if parsed_unit in unit_keys else 0
+                            st.text_input("Name in Master Stock", value=_nice_name(row["description"]), key=f"inv_new_ing_name_{idx}")
+                            with st.container(key=f"catpills-{idx}"):
+                                st.pills("Category", INV_CATEGORIES, selection_mode="multi",
+                                         key=f"inv_new_ing_category_{idx}", label_visibility="collapsed")
+                            u1, u2 = st.columns(2)
+                            with u1:
+                                selected_unit = st.selectbox("Unit", unit_keys, index=default_unit_idx, key=f"inv_new_ing_display_unit_{idx}")
+                            with u2:
+                                st.number_input(f"Pack size ({selected_unit})", min_value=0.0, step=1.0,
+                                                value=parsed_qty, key=f"inv_new_ing_display_qty_{idx}")
+                            st.markdown(unit_cost_strip_html(f"${unit_price:.2f} / {parsed_unit}", supplier_label), unsafe_allow_html=True)
+                            with st.expander("More details"):
+                                st.number_input(
+                                    "Recipe portion size", min_value=0.0, step=1.0, value=1.0,
+                                    help="How much of this ingredient does one recipe step typically use? Leave at 1 if you're not sure.",
+                                    key=f"inv_new_ing_recipe_unit_{idx}"
+                                )
+                                st.text_input("Packaging word (optional)", placeholder="bag, tin, drum, carton...",
+                                              key=f"inv_new_ing_container_{idx}")
+
+                        elif mode == MODE_MATCH:
+                            st.selectbox("Same as", all_ingredient_names, index=None,
+                                         placeholder="Choose an item…", key=f"inv_match_pick_{idx}")
+
+                        else:
+                            st.markdown(skip_note_html(), unsafe_allow_html=True)
+
+                    # The apply step reads inv_match_choice_<idx>; keep it in step with the card.
+                    st.session_state[f"inv_match_choice_{idx}"] = {
+                        MODE_CREATE: "+ Create new ingredient",
+                        MODE_MATCH: st.session_state.get(f"inv_match_pick_{idx}") or "-- skip this item --",
+                    }.get(mode, "-- skip this item --")
+
+        if matched_idx:
+            st.markdown(section_head("Already in Master Stock", f"{len(matched_idx)} lines"), unsafe_allow_html=True)
+        for idx in matched_idx:
+            row = scan["rows"][idx]
             st.markdown("---")
             cols = st.columns([3, 2, 2])
             cols[0].write(f"**{row['description']}**  \n{row['pack_size']}")
             parsed_qty, parsed_unit = parse_pack_size(row["pack_size"], row["description"])
-            INV_UNIT_MAP_LOCAL = {"g": ("g", 1), "Kg": ("g", 1000), "ml": ("ml", 1), "L": ("ml", 1000), "Each": ("each", 1)}
-            _, factor = INV_UNIT_MAP_LOCAL.get(parsed_unit, ("each", 1))
             unit_price = row.get("unit_price", row["new_price"])
             cols[1].write(f"**${unit_price:.2f} per {parsed_unit}**")
-
-            if row["status"] == "unmatched":
-                cols[2].write("🔴 No confident match")
-                choice_options = ["-- skip this item --", "+ Create new ingredient"] + all_ingredient_names
-                chosen = st.selectbox(
-                    "Match to an ingredient, create new, or skip",
-                    choice_options,
-                    key=f"inv_match_choice_{idx}"
+            badge = "🟡 Needs review" if row["status"] == "alert" else "🟢 Small change — pre-approved"
+            cols[2].write(
+                f"{badge}  \nMatched: **{row['matched_ingredient']}**  \n"
+                f"${row['old_price']:.2f} → ${row['new_price']:.2f} ({row['pct_change']:+.1f}%)"
+            )
+            apply_checked = st.checkbox(
+                f"Apply this price update to {row['matched_ingredient']}",
+                value=(row["status"] == "auto"),
+                key=f"inv_apply_{idx}"
+            )
+            # Always show a "change match" override dropdown so wrong fuzzy matches can be corrected
+            with st.expander("Wrong match? Change it"):
+                override_options = ["-- keep current match --", "+ Create new ingredient"] + all_ingredient_names
+                override_val = st.selectbox(
+                    "Match to a different ingredient instead",
+                    override_options,
+                    key=f"inv_override_{idx}"
                 )
-                if chosen == "+ Create new ingredient":
+                if override_val == "+ Create new ingredient":
                     # parsed_qty and parsed_unit already computed above for the price display
                     unit_keys = list(INV_UNIT_MAP.keys())
                     default_unit_idx = unit_keys.index(parsed_unit) if parsed_unit in unit_keys else 0
                     st.write("**New ingredient details:**")
                     nc1, nc2, nc3 = st.columns(3)
                     with nc1:
-                        st.text_input("Ingredient name", value=row["description"], key=f"inv_new_ing_name_{idx}")
-                        st.multiselect("Category", INV_CATEGORIES, default=[], key=f"inv_new_ing_category_{idx}")
+                        st.text_input("Ingredient name", value=row["description"], key=f"inv_ovr_new_name_{idx}")
+                        st.multiselect("Category", INV_CATEGORIES, default=[], key=f"inv_ovr_new_category_{idx}")
                     with nc2:
-                        selected_unit = st.selectbox(
-                            "Unit", unit_keys, index=default_unit_idx,
-                            key=f"inv_new_ing_display_unit_{idx}"
-                        )
-                        st.number_input(
-                            f"Purchase quantity ({selected_unit})", min_value=0.0, step=1.0,
-                            value=parsed_qty, key=f"inv_new_ing_display_qty_{idx}"
-                        )
+                        ovr_unit = st.selectbox("Unit", unit_keys, index=default_unit_idx, key=f"inv_ovr_new_display_unit_{idx}")
+                        st.number_input(f"Purchase quantity ({ovr_unit})", min_value=0.0, step=1.0, value=parsed_qty, key=f"inv_ovr_new_display_qty_{idx}")
                     with nc3:
-                        st.number_input(
-                            "Recipe portion size", min_value=0.0, step=1.0, value=1.0,
-                            help="How much of this ingredient does one recipe step typically use? Leave at 1 if you're not sure.",
-                            key=f"inv_new_ing_recipe_unit_{idx}"
-                        )
-                        st.text_input(
-                            "Packaging word (optional)", placeholder="bag, tin, drum, carton...",
-                            key=f"inv_new_ing_container_{idx}"
-                        )
-            else:
-                badge = "🟡 Needs review" if row["status"] == "alert" else "🟢 Small change — pre-approved"
-                cols[2].write(
-                    f"{badge}  \nMatched: **{row['matched_ingredient']}**  \n"
-                    f"${row['old_price']:.2f} → ${row['new_price']:.2f} ({row['pct_change']:+.1f}%)"
-                )
-                apply_checked = st.checkbox(
-                    f"Apply this price update to {row['matched_ingredient']}",
-                    value=(row["status"] == "auto"),
-                    key=f"inv_apply_{idx}"
-                )
-                # Always show a "change match" override dropdown so wrong fuzzy matches can be corrected
-                with st.expander("Wrong match? Change it"):
-                    override_options = ["-- keep current match --", "+ Create new ingredient"] + all_ingredient_names
-                    override_val = st.selectbox(
-                        "Match to a different ingredient instead",
-                        override_options,
-                        key=f"inv_override_{idx}"
-                    )
-                    if override_val == "+ Create new ingredient":
-                        # parsed_qty and parsed_unit already computed above for the price display
-                        unit_keys = list(INV_UNIT_MAP.keys())
-                        default_unit_idx = unit_keys.index(parsed_unit) if parsed_unit in unit_keys else 0
-                        st.write("**New ingredient details:**")
-                        nc1, nc2, nc3 = st.columns(3)
-                        with nc1:
-                            st.text_input("Ingredient name", value=row["description"], key=f"inv_ovr_new_name_{idx}")
-                            st.multiselect("Category", INV_CATEGORIES, default=[], key=f"inv_ovr_new_category_{idx}")
-                        with nc2:
-                            ovr_unit = st.selectbox("Unit", unit_keys, index=default_unit_idx, key=f"inv_ovr_new_display_unit_{idx}")
-                            st.number_input(f"Purchase quantity ({ovr_unit})", min_value=0.0, step=1.0, value=parsed_qty, key=f"inv_ovr_new_display_qty_{idx}")
-                        with nc3:
-                            st.number_input("Recipe portion size", min_value=0.0, step=1.0, value=1.0, key=f"inv_ovr_new_recipe_unit_{idx}")
-                            st.text_input("Packaging word (optional)", placeholder="bag, tin, drum...", key=f"inv_ovr_new_container_{idx}")
+                        st.number_input("Recipe portion size", min_value=0.0, step=1.0, value=1.0, key=f"inv_ovr_new_recipe_unit_{idx}")
+                        st.text_input("Packaging word (optional)", placeholder="bag, tin, drum...", key=f"inv_ovr_new_container_{idx}")
 
         st.markdown("---")
-        if st.button("Apply confirmed changes"):
+        if unsorted_count:
+            st.caption(f"Sort the {unsorted_count} new item{'s' if unsorted_count != 1 else ''} above to apply this invoice.")
+        if st.button("Apply confirmed changes", type="primary", disabled=unsorted_count > 0):
             conn = db.get_connection()
 
             # Step 1: resolve the supplier

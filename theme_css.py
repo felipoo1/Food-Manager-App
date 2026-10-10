@@ -23,6 +23,9 @@ CARD_INNER = "#fbf7f1"  # darker than N200 so it reads on the cream page
 N700, N800, N900 = "#645c50", "#474238", "#2e2b25"
 INK = "#201e1d"
 ACCENT, ACCENT_100, ACCENT_700 = "#c67139", "#fff2eb", "#8c491a"
+ACCENT_300 = "#eab48d"
+SAGE, SAGE_100, SAGE_200, SAGE_800, SAGE_900 = "#7a8a5e", "#e9ede1", "#d5ddc6", "#4b5636", "#3f4a2c"
+NEW_TODO_BORDER = ACCENT_300
 
 _CSS = f"""
 <style>
@@ -419,6 +422,80 @@ label p {{ font-size: 0.8rem !important; color: {N700} !important; }}
 #MainMenu, footer, [data-testid="stDecoration"] {{ display: none !important; }}
 ::selection {{ background: rgba(198,113,57,0.28) !important; }}
 :focus-visible {{ outline: 2px solid {ACCENT} !important; outline-offset: 2px !important; }}
+
+/* ── invoices: new-item cards ─────────────────────────── */
+[class*="st-key-grid2-newitems"] {{
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)) !important;
+  gap: 14px !important; align-items: start !important; margin-top: 4px !important;
+}}
+[class*="st-key-newcard-"] {{
+  display: block !important;
+  background: {CARD_INNER} !important; border: 2px solid transparent !important;
+  border-radius: 20px !important; padding: 16px 18px !important;
+  box-shadow: 0 1px 2px rgba(70,50,30,.06), 0 2px 8px rgba(70,50,30,.05) !important;
+}}
+[class*="st-key-newcard-"] > * {{
+  position: static !important; transform: none !important; height: auto !important;
+  min-height: 0 !important; flex: none !important; margin: 0 0 10px 0 !important;
+}}
+[class*="st-key-newcard-"] > *:last-child {{ margin-bottom: 0 !important; }}
+[class*="st-key-newcard-"] :is([data-testid="stMarkdown"], [data-testid="stMarkdownContainer"], p) {{ margin: 0 !important; }}
+[class*="st-key-newcard-"] label p {{ font-size: 0.75rem !important; font-weight: 600 !important; color: {N700} !important; }}
+[class*="st-key-newcard-"] :is([data-testid="stTextInput"], [data-testid="stNumberInput"], [data-testid="stSelectbox"]) > div > div,
+[class*="st-key-newcard-"] [data-baseweb="select"] > div,
+[class*="st-key-newcard-"] [data-baseweb="input"] {{
+  border-radius: 999px !important; background: {N100} !important; border-color: {N300} !important;
+}}
+[class*="st-key-newcard-"] input {{ background: transparent !important; font-weight: 600 !important; }}
+[class*="st-key-newcard-"] [data-testid="stExpander"] details {{
+  border: 0 !important; background: {N200} !important; border-radius: 14px !important;
+}}
+[class*="st-key-newcard-"] [data-testid="stExpander"] summary p {{ font-size: 0.8rem !important; font-weight: 600 !important; }}
+
+/* Create new · Match · Skip — one pill track, dark active segment */
+[class*="st-key-seg-"] [data-testid="stButtonGroup"] {{ width: 100% !important; }}
+[class*="st-key-seg-"] [data-testid="stButtonGroup"] > div {{
+  display: flex !important; width: 100% !important; gap: 2px !important;
+  padding: 3px !important; background: {N200} !important; border-radius: 999px !important;
+}}
+[class*="st-key-seg-"] button {{
+  flex: 1 1 0 !important; min-height: 0 !important; padding: 7px 8px !important;
+  border: 0 !important; border-radius: 999px !important; background: transparent !important;
+  color: {N800} !important; box-shadow: none !important;
+}}
+[class*="st-key-seg-"] button p {{ font-size: 0.82rem !important; font-weight: 700 !important; color: inherit !important; }}
+[class*="st-key-seg-"] button:hover {{ background: {N300} !important; }}
+[class*="st-key-seg-"] [data-testid$="segmented_controlActive"],
+[class*="st-key-seg-"] button[kind$="segmented_controlActive"] {{ background: {INK} !important; color: {N100} !important; }}
+[class*="st-key-seg-"] [data-testid$="segmented_controlActive"] p {{ color: {N100} !important; }}
+
+/* suggestion chips */
+[class*="st-key-sugs-"] {{ gap: 6px !important; flex-wrap: wrap !important; }}
+[class*="st-key-sug-"] button {{
+  min-height: 0 !important; padding: 6px 13px !important; border-radius: 999px !important;
+  border: 1px solid {N300} !important; background: {N100} !important; color: {INK} !important;
+}}
+[class*="st-key-sug-"] button p {{ font-size: 0.8rem !important; font-weight: 600 !important; }}
+[class*="st-key-sug-"] button:hover {{ background: {N200} !important; border-color: {ACCENT} !important; }}
+
+/* "Nothing close" strip */
+[class*="st-key-nomatch-"] {{
+  background: {ACCENT_100} !important; border-radius: 14px !important; padding: 10px 14px !important; gap: 10px !important;
+}}
+[class*="st-key-nomatch-"] p {{ font-size: 0.8rem !important; color: #6b3613 !important; }}
+[class*="st-key-nomatch-"] [class*="st-key-link-"] {{ margin-left: auto !important; }}
+
+/* category pills inside a card: sage when chosen */
+[class*="st-key-catpills-"] button {{
+  min-height: 0 !important; padding: 4px 11px !important; border-radius: 999px !important;
+  border: 1px solid {N300} !important; background: {N100} !important; color: {N700} !important;
+}}
+[class*="st-key-catpills-"] button p {{ font-size: 0.75rem !important; font-weight: 600 !important; }}
+[class*="st-key-catpills-"] [data-testid="stBaseButton-pillsActive"] {{
+  background: {SAGE_200} !important; border-color: {SAGE} !important; color: {SAGE_900} !important;
+}}
+[class*="st-key-catpills-"] [data-testid="stBaseButton-pillsActive"] p {{ color: {SAGE_900} !important; }}
 </style>
 """
 
@@ -586,4 +663,58 @@ def price_check_html(cost, price) -> str:
         f'{body}<div style="margin-top:8px;padding:12px 14px;border-radius:14px;background:{bg};color:{fg}">'
         f'<div style="font-weight:700;font-size:0.88rem">{head}</div>'
         f'<div style="font-size:0.8rem;line-height:1.4;margin-top:2px">{sub}</div></div>'
+    )
+
+
+def newitems_head_html(total: int, sorted_n: int) -> str:
+    """Title, helper line and sorted-progress bar above the new-item cards."""
+    pct = round(sorted_n / total * 100) if total else 0
+    noun = "item isn't" if total == 1 else "items aren't"
+    return (
+        f'<div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 18px;margin:10px 0 2px">'
+        f'<div style="flex:1;min-width:220px">'
+        f'<div style="font-family:Nunito,sans-serif;font-weight:800;font-size:1.2rem;line-height:1.25;color:{INK}">'
+        f'{total} {noun} in Master Stock yet</div>'
+        f'<div style="font-size:0.82rem;color:{N700};margin-top:2px">'
+        f'Create each one, match it to something you already stock, or skip it.</div></div>'
+        f'<div style="display:flex;align-items:center;gap:8px">'
+        f'<div style="width:90px;height:8px;border-radius:999px;background:{N300};overflow:hidden">'
+        f'<div style="height:100%;width:{pct}%;border-radius:999px;background:{SAGE}"></div></div>'
+        f'<span style="font-size:0.78rem;font-weight:700;white-space:nowrap;color:{N800}">{sorted_n} of {total} sorted</span>'
+        f'</div></div>'
+    )
+
+
+def newitem_head_html(desc: str, qty_line: str, total: str, status: str, tone: str) -> str:
+    """Card header: sage initial circle, printed line + qty/price, status pill over the line total."""
+    import html as _h
+    initial = _h.escape((desc.strip()[:1] or "?").upper())
+    return (
+        f'<div style="display:flex;align-items:flex-start;gap:12px">'
+        f'<div style="flex:none;width:46px;height:46px;border-radius:50%;background:{SAGE_100};'
+        f'display:grid;place-items:center;font-family:Nunito,sans-serif;font-weight:800;font-size:1.15rem;color:{SAGE_800}">{initial}</div>'
+        f'<div style="flex:1;min-width:0">'
+        f'<div style="font-size:0.72rem;font-weight:700;letter-spacing:.05em;color:{N600};line-height:1.3">{_h.escape(desc)}</div>'
+        f'<div style="font-size:0.85rem;color:{N800};margin-top:2px">{_h.escape(qty_line)}</div></div>'
+        f'<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'
+        f'{tag(status, tone)}'
+        f'<span style="font-family:Nunito,sans-serif;font-weight:800;font-size:1.05rem;white-space:nowrap;color:{INK}">{total}</span>'
+        f'</div></div>'
+    )
+
+
+def unit_cost_strip_html(unit_cost: str, supplier: str) -> str:
+    import html as _h
+    return (
+        f'<div style="display:flex;flex-wrap:wrap;gap:4px 12px;padding:9px 14px;border-radius:14px;'
+        f'background:{SAGE_100};font-size:0.8rem;color:{SAGE_900}">'
+        f'<span style="flex:1;min-width:120px">Unit cost <strong>{_h.escape(unit_cost)}</strong></span>'
+        f'<span style="white-space:nowrap">from {_h.escape(supplier)}</span></div>'
+    )
+
+
+def skip_note_html() -> str:
+    return (
+        f'<div style="padding:9px 14px;border-radius:14px;background:{N200};font-size:0.8rem;'
+        f'line-height:1.4;color:{N700}">Stays on the invoice total but won\'t be added to stock or prices.</div>'
     )
