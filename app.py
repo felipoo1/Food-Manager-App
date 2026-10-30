@@ -454,12 +454,7 @@ is_owner = current_user["role"] == "owner"
 # Palette, type, pill nav, cards, tables and tick-boxes live in theme_css.py
 # and in .streamlit/config.toml. Do not add page-level <style> blocks here —
 # they fight the theme.
-import importlib, theme_css as _theme_css
-importlib.reload(_theme_css)  # Streamlit keeps a stale copy across uploads otherwise
-from theme_css import (inject_theme, tag, day_header, page_header, card_html,
-                       section_head, recipe_stats_html, price_check_html,
-                       newitems_head_html, newitem_head_html, unit_cost_strip_html,
-                       skip_note_html, NEW_TODO_BORDER, N700 as N700_HEX)
+from theme_css import inject_theme, tag, day_header, page_header, card_html
 inject_theme()
 
 
@@ -1169,13 +1164,15 @@ if page == "Master Stock List":
                                       and r["current_stock_qty"] < r["min_stock_qty"])
                             stock_chip = tag(f"{stock_display:g} {display_unit}",
                                              "alert" if is_low else "neutral")
+                        size_label = r["purchase_size_label"] or "no size set"
+                        price_meta = (f'{size_label} · ${r["purchase_price"]:.2f}' if r["purchase_price"] is not None else f'{size_label} · price not set')
                         st.markdown(card_html(r["name"], [
-                            (f'{r["purchase_size_label"]} · ${r["purchase_price"]:.2f}', "meta"),
+                            (price_meta, "meta"),
                             (f'${cost:.3f} / {r["recipe_unit_qty"]:g}{r["base_unit"]}', "strong"),
                             (r["primary_supplier_name"] or "No supplier set", "faint"),
                         ], stock_chip), unsafe_allow_html=True)
                         if st.button("Edit", type="tertiary", key=f"link-ing-{r['id']}"):
-                            st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
+                            st.session_state["edit_ingredient_select"] = f"{r['name']} ({size_label})"
                             st.session_state.stock_mode = "edit"
                             st.rerun()
 
@@ -1270,7 +1267,7 @@ if page == "Master Stock List":
         if not all_ingredients:
             st.info("No ingredients to edit yet.")
         else:
-            ingredient_labels = {f"{r['name']} ({r['purchase_size_label']})": r["id"] for r in all_ingredients}
+            ingredient_labels = {f"{r['name']} ({r['purchase_size_label'] or 'no size set'})": r["id"] for r in all_ingredients}
             selected_label = st.selectbox("Ingredient", list(ingredient_labels.keys()), key="edit_ingredient_select")
             selected_id = ingredient_labels[selected_label]
 
@@ -1475,7 +1472,7 @@ elif page == "Recipes":
 
     if page_header(
         "Recipes", "Costed from the master stock list. Costs include 9% GST.",
-        "New category" if st.session_state.recipe_mode == "categories" else None, key="newcat_btn",
+        "New category" if (is_owner and st.session_state.recipe_mode == "categories") else None, key="newcat_btn",
     ):
         st.session_state.recipe_mode = "add_category"
         st.rerun()
@@ -1511,17 +1508,22 @@ elif page == "Recipes":
         if not results:
             st.info(f"No recipes match \"{search_text}\".")
         else:
-            st.caption(f"{len(results)} recipe(s) match \"{search_text}\" — click a name to edit it.")
+            caption_suffix = " — click a name to edit it." if is_owner else ""
+            st.caption(f"{len(results)} recipe(s) match \"{search_text}\"{caption_suffix}")
+            costs = db.batch_compute_recipe_costs([r["id"] for r in results])
             for r in results:
-                cost = db.compute_recipe_cost(r["id"])
+                cost = costs.get(r["id"], 0.0)
                 with st.container(border=True):
                     cols = st.columns([3, 2, 3, 2])
                     with cols[0]:
-                        if st.button(r["name"], type="tertiary", key=f"search_recipe_{r['id']}"):
-                            st.session_state["edit_recipe_select"] = r["name"]
-                            st.session_state.recipe_active_category_id = r["category_id"]
-                            st.session_state.recipe_mode = "edit_recipe"
-                            st.rerun()
+                        if is_owner:
+                            if st.button(r["name"], type="tertiary", key=f"search_recipe_{r['id']}"):
+                                st.session_state["edit_recipe_select"] = r["name"]
+                                st.session_state.recipe_active_category_id = r["category_id"]
+                                st.session_state.recipe_mode = "edit_recipe"
+                                st.rerun()
+                        else:
+                            st.write(r["name"])
                     cols[1].write(f"**Type:** {r['type']}")
                     cols[2].write(f"**Category:** {r['category_name'] or '-'}")
                     cols[3].write(f"**Cost:** ${cost:.2f}")
@@ -1566,6 +1568,10 @@ elif page == "Recipes":
     # ADD CATEGORY
     # ======================================================
     elif st.session_state.recipe_mode == "add_category":
+        if not is_owner:
+            st.warning("Only owners can add categories.")
+            st.session_state.recipe_mode = "categories"
+            st.rerun()
         rtype = st.session_state.recipe_active_type
         st.subheader(f"New {rtype} Category")
 
@@ -1618,19 +1624,22 @@ elif page == "Recipes":
             st.subheader(category["name"])
             st.caption(f"{rtype} category")
         with head_col2:
-            if st.button("Add New Recipe", type="primary", width="stretch"):
+            if is_owner and st.button("Add New Recipe", type="primary", width="stretch"):
                 st.session_state.recipe_mode = "add_recipe"
                 st.rerun()
         with head_col3:
-            if st.button("Edit Category", width="stretch"):
+            if is_owner and st.button("Edit Category", width="stretch"):
                 st.session_state.recipe_mode = "edit_category"
                 st.rerun()
         with head_col4:
-            if st.button("Remove Category", width="stretch"):
+            if is_owner and st.button("Remove Category", width="stretch"):
                 st.session_state.recipe_mode = "remove_category"
                 st.rerun()
 
-        st.caption("Click a recipe name to edit it. Costs shown include 9% GST.")
+        if is_owner:
+            st.caption("Click a recipe name to edit it. Costs shown include 9% GST.")
+        else:
+            st.caption("Costs shown include 9% GST.")
 
         conn = db.get_connection()
         recipes_in_cat = conn.execute(
@@ -1641,15 +1650,19 @@ elif page == "Recipes":
         if not recipes_in_cat:
             st.info("No recipes in this category yet. Click \"+ Add New Recipe\" above.")
         else:
+            costs = db.batch_compute_recipe_costs([r["id"] for r in recipes_in_cat])
             for r in recipes_in_cat:
-                cost = db.compute_recipe_cost(r["id"])
+                cost = costs.get(r["id"], 0.0)
                 with st.container(border=True):
                     cols = st.columns([3, 2, 2, 2])
                     with cols[0]:
-                        if st.button(r["name"], type="tertiary", key=f"recipe_name_{r['id']}"):
-                            st.session_state["edit_recipe_select"] = r["name"]
-                            st.session_state.recipe_mode = "edit_recipe"
-                            st.rerun()
+                        if is_owner:
+                            if st.button(r["name"], type="tertiary", key=f"recipe_name_{r['id']}"):
+                                st.session_state["edit_recipe_select"] = r["name"]
+                                st.session_state.recipe_mode = "edit_recipe"
+                                st.rerun()
+                        else:
+                            st.write(r["name"])
                     if rtype == "Prep":
                         cols[1].write(f"**Yields:** {r['yield_qty']:g}{r['yield_unit']}" if r["yield_qty"] else "**Yields:** -")
                         cols[2].write(f"**Batch cost:** ${cost:.2f}")
@@ -1670,6 +1683,10 @@ elif page == "Recipes":
     # EDIT CATEGORY
     # ======================================================
     elif st.session_state.recipe_mode == "edit_category":
+        if not is_owner:
+            st.warning("Only owners can edit categories.")
+            st.session_state.recipe_mode = "category_detail"
+            st.rerun()
         cat_id = st.session_state.recipe_active_category_id
         conn = db.get_connection()
         category = conn.execute("SELECT * FROM recipe_categories WHERE id = ?", (cat_id,)).fetchone()
@@ -1705,6 +1722,10 @@ elif page == "Recipes":
     # REMOVE CATEGORY
     # ======================================================
     elif st.session_state.recipe_mode == "remove_category":
+        if not is_owner:
+            st.warning("Only owners can remove categories.")
+            st.session_state.recipe_mode = "category_detail"
+            st.rerun()
         cat_id = st.session_state.recipe_active_category_id
         conn = db.get_connection()
         category = conn.execute("SELECT * FROM recipe_categories WHERE id = ?", (cat_id,)).fetchone()
@@ -1729,6 +1750,10 @@ elif page == "Recipes":
     # ADD RECIPE (within a category)
     # ======================================================
     elif st.session_state.recipe_mode == "add_recipe":
+        if not is_owner:
+            st.warning("Only owners can add recipes.")
+            st.session_state.recipe_mode = "category_detail"
+            st.rerun()
         cat_id = st.session_state.recipe_active_category_id
         conn = db.get_connection()
         category = conn.execute("SELECT * FROM recipe_categories WHERE id = ?", (cat_id,)).fetchone()
@@ -1772,6 +1797,11 @@ elif page == "Recipes":
     # EDIT RECIPE
     # ======================================================
     elif st.session_state.recipe_mode == "edit_recipe":
+        if not is_owner:
+            st.warning("Only owners can edit recipes.")
+            st.session_state.recipe_mode = "categories"
+            st.rerun()
+
         st.subheader("Edit a recipe")
 
         all_recipe_options = recipe_options()
@@ -1911,93 +1941,81 @@ elif page == "Recipes":
                         st.success("Conversion added.")
                         st.rerun()
 
-            # ---- Costing: stat tiles, ingredient table, price check (matches mock) ----
-            conn = db.get_connection()
-            costed = []
-            for line in lines:
-                lc = db.compute_line_cost(line, conn) or 0
-                if line["ingredient_id"] is not None:
-                    costed.append((line, line["ingredient_name"], f"{line['quantity']:g} {line['ingredient_unit']}", lc, False))
+            st.markdown("---")
+            st.write(f"**Current ingredients in {recipe['name']}:**")
+            if not lines:
+                st.write("No ingredients added yet.")
+            else:
+                conn = db.get_connection()
+                for line in lines:
+                    line_cost = db.compute_line_cost(line, conn)
+                    if line["ingredient_id"] is not None:
+                        unit = line["ingredient_unit"]
+                        name = line["ingredient_name"]
+                    else:
+                        unit = line["sub_recipe_unit"]
+                        name = f"{line['sub_recipe_name']} (Prep)"
+                    label = f"{name} — {line['quantity']:g}{unit}"
+
+                    row_col1, row_col2, row_col3, row_col4 = st.columns([4, 2, 1, 1])
+                    row_col1.write(label)
+                    row_col2.write(f"${line_cost:.3f}")
+
+                    # Edit quantity inline
+                    edit_key = f"edit_line_open_{line['id']}"
+                    if edit_key not in st.session_state:
+                        st.session_state[edit_key] = False
+
+                    if row_col3.button("Edit", key=f"edit_line_btn_{line['id']}"):
+                        st.session_state[edit_key] = not st.session_state[edit_key]
+
+                    if row_col4.button("Remove", key=f"remove_line_{line['id']}"):
+                        conn.execute("DELETE FROM recipe_lines WHERE id = ?", (line["id"],))
+                        conn.commit()
+                        conn.close()
+                        st.rerun()
+
+                    if st.session_state.get(edit_key):
+                        with st.form(f"edit_line_form_{line['id']}"):
+                            new_qty = st.number_input(
+                                f"New quantity ({unit})", min_value=0.001, step=0.5,
+                                value=float(line["quantity"]),
+                                key=f"edit_line_qty_{line['id']}"
+                            )
+                            if st.form_submit_button("Save"):
+                                conn.execute(
+                                    "UPDATE recipe_lines SET quantity = ? WHERE id = ?",
+                                    (new_qty, line["id"])
+                                )
+                                conn.commit()
+                                st.session_state[edit_key] = False
+                                conn.close()
+                                st.rerun()
+                conn.close()
+
+            # Live cost summary
+            live_cost = db.compute_recipe_cost(selected_recipe_id)
+            if recipe["type"] == "Prep":
+                st.info(
+                    f"Batch cost (incl. 9% GST): ${live_cost:.2f}  |  "
+                    f"Cost per {recipe['yield_unit']}: "
+                    f"${(live_cost / recipe['yield_qty']) if recipe['yield_qty'] else 0:.4f}"
+                )
+            else:
+                if recipe["selling_price"]:
+                    pct = live_cost / recipe["selling_price"] * 100
+                    status = db.food_cost_status(pct)
+                    badge = {"ok": "🟢", "warning": "🟡", "alert": "🔴"}[status]
+                    st.info(f"Total cost (incl. 9% GST): ${live_cost:.2f}  |  Selling price: ${recipe['selling_price']:.2f}  |  {badge} **{pct:.1f}% food cost**")
+                    if status == "alert":
+                        st.error("⚠️ This recipe is at or above the 30% food cost alert threshold.")
+                    elif status == "warning":
+                        st.warning("This recipe is above the 25% target food cost.")
                 else:
-                    costed.append((line, line["sub_recipe_name"], f"{line['quantity']:g} {line['sub_recipe_unit']}", lc, True))
-            conn.close()
-            live_cost = db.compute_recipe_cost(selected_recipe_id) or 0
-            is_prep = recipe["type"] == "Prep"
-            portions = recipe["portions"] if recipe["portions"] and recipe["portions"] > 0 else None
-            per_portion = live_cost / portions if portions else live_cost
-            price = recipe["selling_price"] or 0
+                    st.info(f"Total cost (incl. 9% GST): ${live_cost:.2f}  |  No selling price set yet.")
 
-            st.markdown(recipe_stats_html(
-                recipe, live_cost, per_portion, price, len(costed), is_prep
-            ), unsafe_allow_html=True)
-
-            st.markdown(section_head(
-                "Ingredients",
-                "Whole batch · prices incl. 9% GST" if is_prep else "Per recipe · prices incl. 9% GST",
-            ), unsafe_allow_html=True)
-
-            with st.container(key="costtable"):
-                if not costed:
-                    st.caption("No ingredients added yet — add one below.")
-                else:
-                    CC = [5, 2, 2, 2, 1]
-                    with st.container(key="costhead"):
-                        h = st.columns(CC, vertical_alignment="center")
-                        for col, label in zip(h, ["Ingredient", "Qty", "Line cost", "Share", ""]):
-                            col.markdown(label)
-                    for line, name, qty, lc, sub in costed:
-                        share = (lc / live_cost * 100) if live_cost else 0
-                        with st.container(key=f"costrow-{line['id']}"):
-                            c1, c2, c3, c4, c5 = st.columns(CC, vertical_alignment="center")
-                            prep_chip = " " + tag("Prep", "ok") if sub else ""
-                            warn = (
-                                '<div style="font-size:0.72rem;color:#8c491a">No price on this ingredient</div>'
-                                if lc == 0 else ""
-                            )
-                            c1.markdown(
-                                f'<div style="font-weight:700;font-size:0.9rem;line-height:1.3">{name}{prep_chip}</div>{warn}',
-                                unsafe_allow_html=True,
-                            )
-                            c2.markdown(f'<span style="font-size:0.86rem;color:#645c50">{qty}</span>', unsafe_allow_html=True)
-                            c3.markdown(f'<span style="font-size:0.9rem;font-weight:700">${lc:.2f}</span>', unsafe_allow_html=True)
-                            bar = "#c67139" if share >= 40 else "#82796a"
-                            c4.markdown(
-                                f'<div style="display:flex;align-items:center;gap:6px">'
-                                f'<div style="flex:1;max-width:56px;height:6px;border-radius:999px;background:#dcd3c4;overflow:hidden">'
-                                f'<div style="height:100%;width:{share:.0f}%;background:{bar};border-radius:999px"></div></div>'
-                                f'<span style="font-size:0.75rem;color:#645c50">{share:.0f}%</span></div>',
-                                unsafe_allow_html=True,
-                            )
-                            with c5:
-                                if st.button("Remove", type="tertiary", key=f"link-rmline-{line['id']}"):
-                                    c = db.get_connection()
-                                    c.execute("DELETE FROM recipe_lines WHERE id = ?", (line["id"],))
-                                    c.commit()
-                                    c.close()
-                                    st.rerun()
-                    st.markdown(
-                        f'<div style="display:flex;align-items:baseline;gap:10px;padding:10px 0 4px;border-top:1px solid #dcd3c4">'
-                        f'<span style="flex:1;font-weight:700">{"Batch cost" if is_prep else ("Cost per portion" if portions else "Total cost")}</span>'
-                        f'<span style="font-family:Nunito,sans-serif;font-weight:800;font-size:1.15rem">'
-                        f'${(live_cost if is_prep else per_portion):.2f}</span></div>',
-                        unsafe_allow_html=True,
-                    )
-
-            if not is_prep:
-                with st.container(key="pricecheck"):
-                    st.markdown(section_head("Price check", ""), unsafe_allow_html=True)
-                    try_price = st.number_input(
-                        "Selling price (incl. GST) $", min_value=0.0, step=0.5,
-                        value=float(price), key=f"pricecheck_{selected_recipe_id}",
-                    )
-                    st.markdown(price_check_html(per_portion, try_price), unsafe_allow_html=True)
-                    if try_price != float(price):
-                        if st.button("Save this price", type="primary", key=f"save_price_{selected_recipe_id}"):
-                            c = db.get_connection()
-                            c.execute("UPDATE recipes SET selling_price=? WHERE id=?", (try_price, selected_recipe_id))
-                            c.commit()
-                            c.close()
-                            st.rerun()
+                if recipe["portions"] and recipe["portions"] > 0:
+                    st.caption(f"Cost per portion (÷ {recipe['portions']:g} portions): ${live_cost / recipe['portions']:.3f}")
 
             st.write("**Add an ingredient or Prep recipe to this:**")
             component_type_choices = ["Raw ingredient"]
@@ -3468,7 +3486,7 @@ elif page == "Invoices":
                         # support -- without it the API silently fails even on
                         # recent models.
                         api_kwargs = dict(
-                            model="claude-haiku-4-5-20251001",
+                            model="claude-haiku-4-5",
                             max_tokens=4096,
                             system=(
                                 "You extract structured data from supplier invoices for a cafe's "
@@ -3753,175 +3771,111 @@ elif page == "Invoices":
                 result = _try_parse(description)
             return result if result is not None else (1.0, "Each")
 
-        import difflib, html as _html
-
-        def _suggest(desc, names, n=2):
-            d = desc.lower()
-            scored = sorted(((difflib.SequenceMatcher(None, d, nm.lower()).ratio(), nm) for nm in names), reverse=True)
-            return [(nm, int(r * 100)) for r, nm in scored[:n] if r >= 0.4]
-
-        def _nice_name(desc):
-            s = desc.strip().lower()
-            return s[:1].upper() + s[1:]
-
-        MODE_CREATE, MODE_MATCH, MODE_SKIP = "Create new", "Match", "Skip"
-        new_idx = [i for i, r in enumerate(scan["rows"]) if r["status"] == "unmatched"]
-        matched_idx = [i for i, r in enumerate(scan["rows"]) if r["status"] != "unmatched"]
-        supplier_label = scan.get("supplier_matched") or scan.get("supplier_input") or "this supplier"
-
-        def _is_sorted(i):
-            mode = st.session_state.get(f"inv_mode_{i}")
-            if mode == MODE_MATCH:
-                return bool(st.session_state.get(f"inv_match_pick_{i}"))
-            return mode in (MODE_CREATE, MODE_SKIP)
-
-        def _create_rest():
-            for i in new_idx:
-                if not _is_sorted(i):
-                    st.session_state[f"inv_mode_{i}"] = MODE_CREATE
-
-        def _pick(i, name):
-            st.session_state[f"inv_mode_{i}"] = MODE_MATCH
-            st.session_state[f"inv_match_pick_{i}"] = name
-
-        def _set_mode(i, mode):
-            st.session_state[f"inv_mode_{i}"] = mode
-
-        unsorted_count = 0
-        if new_idx:
-            sorted_n = sum(1 for i in new_idx if _is_sorted(i))
-            unsorted_count = len(new_idx) - sorted_n
-            hl, hr = st.columns([7, 3], vertical_alignment="bottom")
-            with hl:
-                st.markdown(newitems_head_html(len(new_idx), sorted_n), unsafe_allow_html=True)
-            with hr:
-                with st.container(horizontal=True, horizontal_alignment="right"):
-                    st.button("Create the rest as new", key="inv_create_rest", on_click=_create_rest,
-                              disabled=unsorted_count == 0)
-            todo = [i for i in new_idx if not _is_sorted(i)]
-            if todo:
-                st.markdown("<style>" + "".join(
-                    f".st-key-newcard-{i}{{border-color:{NEW_TODO_BORDER} !important}}" for i in todo
-                ) + "</style>", unsafe_allow_html=True)
-
-            with st.container(key="grid2-newitems"):
-                for idx in new_idx:
-                    row = scan["rows"][idx]
-                    parsed_qty, parsed_unit = parse_pack_size(row["pack_size"], row["description"])
-                    unit_price = row.get("unit_price", row["new_price"])
-                    done = _is_sorted(idx)
-                    mode = st.session_state.get(f"inv_mode_{idx}")
-                    status = ("Skipped", "neutral") if (done and mode == MODE_SKIP) else (("Sorted", "ok") if done else ("To sort", "alert"))
-                    with st.container(key=f"newcard-{idx}"):
-                        st.markdown(newitem_head_html(
-                            row["description"],
-                            f"{parsed_qty:g} {parsed_unit} · ${unit_price:.2f} per {parsed_unit}",
-                            f"${unit_price * parsed_qty:.2f}", status[0], status[1]
-                        ), unsafe_allow_html=True)
-                        with st.container(key=f"seg-{idx}"):
-                            st.segmented_control(
-                                "How to handle", [MODE_CREATE, MODE_MATCH, MODE_SKIP],
-                                key=f"inv_mode_{idx}", label_visibility="collapsed"
-                            )
-                        mode = st.session_state.get(f"inv_mode_{idx}")
-
-                        if mode is None:
-                            sugs = _suggest(row["description"], all_ingredient_names)
-                            if sugs:
-                                st.markdown(f'<div style="font-size:0.75rem;font-weight:600;color:{N700_HEX}">Closest in Master Stock</div>', unsafe_allow_html=True)
-                                with st.container(key=f"sugs-{idx}", horizontal=True):
-                                    for j, (nm, pct) in enumerate(sugs):
-                                        st.button(f"{nm}  ·  {pct}% match", key=f"sug-{idx}-{j}",
-                                                  on_click=_pick, args=(idx, nm))
-                            else:
-                                with st.container(key=f"nomatch-{idx}", horizontal=True, vertical_alignment="center"):
-                                    st.markdown("Nothing close in Master Stock.")
-                                    st.button("Create it", key=f"link-create-{idx}", on_click=_set_mode, args=(idx, MODE_CREATE))
-
-                        elif mode == MODE_CREATE:
-                            unit_keys = list(INV_UNIT_MAP.keys())
-                            default_unit_idx = unit_keys.index(parsed_unit) if parsed_unit in unit_keys else 0
-                            st.text_input("Name in Master Stock", value=_nice_name(row["description"]), key=f"inv_new_ing_name_{idx}")
-                            with st.container(key=f"catpills-{idx}"):
-                                st.pills("Category", INV_CATEGORIES, selection_mode="multi",
-                                         key=f"inv_new_ing_category_{idx}", label_visibility="collapsed")
-                            u1, u2 = st.columns(2)
-                            with u1:
-                                selected_unit = st.selectbox("Unit", unit_keys, index=default_unit_idx, key=f"inv_new_ing_display_unit_{idx}")
-                            with u2:
-                                st.number_input(f"Pack size ({selected_unit})", min_value=0.0, step=1.0,
-                                                value=parsed_qty, key=f"inv_new_ing_display_qty_{idx}")
-                            st.markdown(unit_cost_strip_html(f"${unit_price:.2f} / {parsed_unit}", supplier_label), unsafe_allow_html=True)
-                            with st.expander("More details"):
-                                st.number_input(
-                                    "Recipe portion size", min_value=0.0, step=1.0, value=1.0,
-                                    help="How much of this ingredient does one recipe step typically use? Leave at 1 if you're not sure.",
-                                    key=f"inv_new_ing_recipe_unit_{idx}"
-                                )
-                                st.text_input("Packaging word (optional)", placeholder="bag, tin, drum, carton...",
-                                              key=f"inv_new_ing_container_{idx}")
-
-                        elif mode == MODE_MATCH:
-                            st.selectbox("Same as", all_ingredient_names, index=None,
-                                         placeholder="Choose an item…", key=f"inv_match_pick_{idx}")
-
-                        else:
-                            st.markdown(skip_note_html(), unsafe_allow_html=True)
-
-                    # The apply step reads inv_match_choice_<idx>; keep it in step with the card.
-                    st.session_state[f"inv_match_choice_{idx}"] = {
-                        MODE_CREATE: "+ Create new ingredient",
-                        MODE_MATCH: st.session_state.get(f"inv_match_pick_{idx}") or "-- skip this item --",
-                    }.get(mode, "-- skip this item --")
-
-        if matched_idx:
-            st.markdown(section_head("Already in Master Stock", f"{len(matched_idx)} lines"), unsafe_allow_html=True)
-        for idx in matched_idx:
-            row = scan["rows"][idx]
+        for idx, row in enumerate(scan["rows"]):
             st.markdown("---")
             cols = st.columns([3, 2, 2])
             cols[0].write(f"**{row['description']}**  \n{row['pack_size']}")
             parsed_qty, parsed_unit = parse_pack_size(row["pack_size"], row["description"])
+            INV_UNIT_MAP_LOCAL = {"g": ("g", 1), "Kg": ("g", 1000), "ml": ("ml", 1), "L": ("ml", 1000), "Each": ("each", 1)}
+            _, factor = INV_UNIT_MAP_LOCAL.get(parsed_unit, ("each", 1))
             unit_price = row.get("unit_price", row["new_price"])
             cols[1].write(f"**${unit_price:.2f} per {parsed_unit}**")
-            badge = "🟡 Needs review" if row["status"] == "alert" else "🟢 Small change — pre-approved"
-            cols[2].write(
-                f"{badge}  \nMatched: **{row['matched_ingredient']}**  \n"
-                f"${row['old_price']:.2f} → ${row['new_price']:.2f} ({row['pct_change']:+.1f}%)"
-            )
-            apply_checked = st.checkbox(
-                f"Apply this price update to {row['matched_ingredient']}",
-                value=(row["status"] == "auto"),
-                key=f"inv_apply_{idx}"
-            )
-            # Always show a "change match" override dropdown so wrong fuzzy matches can be corrected
-            with st.expander("Wrong match? Change it"):
-                override_options = ["-- keep current match --", "+ Create new ingredient"] + all_ingredient_names
-                override_val = st.selectbox(
-                    "Match to a different ingredient instead",
-                    override_options,
-                    key=f"inv_override_{idx}"
+
+            if row["status"] == "unmatched":
+                cols[2].write("🔴 No confident match")
+                choice_options = ["-- skip this item --", "+ Create new ingredient"] + all_ingredient_names
+                chosen = st.selectbox(
+                    "Match to an ingredient, create new, or skip",
+                    choice_options,
+                    key=f"inv_match_choice_{idx}"
                 )
-                if override_val == "+ Create new ingredient":
+                if chosen == "+ Create new ingredient":
                     # parsed_qty and parsed_unit already computed above for the price display
                     unit_keys = list(INV_UNIT_MAP.keys())
                     default_unit_idx = unit_keys.index(parsed_unit) if parsed_unit in unit_keys else 0
+                    _scanned_pack_price = round(row.get("unit_price", row["new_price"]) * parsed_qty, 2)
                     st.write("**New ingredient details:**")
                     nc1, nc2, nc3 = st.columns(3)
                     with nc1:
-                        st.text_input("Ingredient name", value=row["description"], key=f"inv_ovr_new_name_{idx}")
-                        st.multiselect("Category", INV_CATEGORIES, default=[], key=f"inv_ovr_new_category_{idx}")
+                        st.text_input("Ingredient name", value=row["description"], key=f"inv_new_ing_name_{idx}")
+                        st.multiselect("Category", INV_CATEGORIES, default=[], key=f"inv_new_ing_category_{idx}")
                     with nc2:
-                        ovr_unit = st.selectbox("Unit", unit_keys, index=default_unit_idx, key=f"inv_ovr_new_display_unit_{idx}")
-                        st.number_input(f"Purchase quantity ({ovr_unit})", min_value=0.0, step=1.0, value=parsed_qty, key=f"inv_ovr_new_display_qty_{idx}")
+                        selected_unit = st.selectbox(
+                            "Unit", unit_keys, index=default_unit_idx,
+                            key=f"inv_new_ing_display_unit_{idx}"
+                        )
+                        st.number_input(
+                            f"Purchase quantity ({selected_unit})", min_value=0.0, step=1.0,
+                            value=parsed_qty, key=f"inv_new_ing_display_qty_{idx}"
+                        )
+                        st.number_input(
+                            "Purchase price ($ per pack)", min_value=0.0, step=0.01, format="%.2f",
+                            value=float(_scanned_pack_price),
+                            help="Total price you pay for the pack size above. Edit if the scanned price is wrong.",
+                            key=f"inv_new_ing_price_{idx}"
+                        )
                     with nc3:
-                        st.number_input("Recipe portion size", min_value=0.0, step=1.0, value=1.0, key=f"inv_ovr_new_recipe_unit_{idx}")
-                        st.text_input("Packaging word (optional)", placeholder="bag, tin, drum...", key=f"inv_ovr_new_container_{idx}")
+                        st.number_input(
+                            "Recipe portion size", min_value=0.0, step=1.0, value=1.0,
+                            help="How much of this ingredient does one recipe step typically use? Leave at 1 if you're not sure.",
+                            key=f"inv_new_ing_recipe_unit_{idx}"
+                        )
+                        st.text_input(
+                            "Packaging word (optional)", placeholder="bag, tin, drum, carton...",
+                            key=f"inv_new_ing_container_{idx}"
+                        )
+            else:
+                badge = "🟡 Needs review" if row["status"] == "alert" else "🟢 Small change — pre-approved"
+                cols[2].write(
+                    f"{badge}  \nMatched: **{row['matched_ingredient']}**  \n"
+                    f"${row['old_price']:.2f} → ${row['new_price']:.2f} ({row['pct_change']:+.1f}%)"
+                )
+                apply_checked = st.checkbox(
+                    f"Apply this price update to {row['matched_ingredient']}",
+                    value=(row["status"] == "auto"),
+                    key=f"inv_apply_{idx}"
+                )
+                if apply_checked:
+                    st.number_input(
+                        "Correct price if wrong ($)", min_value=0.0, step=0.01, format="%.2f",
+                        value=float(round(row["new_price"], 2)),
+                        help="Change this if the scanned price is incorrect.",
+                        key=f"inv_price_override_{idx}"
+                    )
+                # Always show a "change match" override dropdown so wrong fuzzy matches can be corrected
+                with st.expander("Wrong match? Change it"):
+                    override_options = ["-- keep current match --", "+ Create new ingredient"] + all_ingredient_names
+                    override_val = st.selectbox(
+                        "Match to a different ingredient instead",
+                        override_options,
+                        key=f"inv_override_{idx}"
+                    )
+                    if override_val == "+ Create new ingredient":
+                        # parsed_qty and parsed_unit already computed above for the price display
+                        unit_keys = list(INV_UNIT_MAP.keys())
+                        default_unit_idx = unit_keys.index(parsed_unit) if parsed_unit in unit_keys else 0
+                        _ovr_pack_price = round(row.get("unit_price", row["new_price"]) * parsed_qty, 2)
+                        st.write("**New ingredient details:**")
+                        nc1, nc2, nc3 = st.columns(3)
+                        with nc1:
+                            st.text_input("Ingredient name", value=row["description"], key=f"inv_ovr_new_name_{idx}")
+                            st.multiselect("Category", INV_CATEGORIES, default=[], key=f"inv_ovr_new_category_{idx}")
+                        with nc2:
+                            ovr_unit = st.selectbox("Unit", unit_keys, index=default_unit_idx, key=f"inv_ovr_new_display_unit_{idx}")
+                            st.number_input(f"Purchase quantity ({ovr_unit})", min_value=0.0, step=1.0, value=parsed_qty, key=f"inv_ovr_new_display_qty_{idx}")
+                            st.number_input(
+                                "Purchase price ($ per pack)", min_value=0.0, step=0.01, format="%.2f",
+                                value=float(_ovr_pack_price),
+                                help="Total price you pay for the pack size above. Edit if the scanned price is wrong.",
+                                key=f"inv_ovr_new_price_{idx}"
+                            )
+                        with nc3:
+                            st.number_input("Recipe portion size", min_value=0.0, step=1.0, value=1.0, key=f"inv_ovr_new_recipe_unit_{idx}")
+                            st.text_input("Packaging word (optional)", placeholder="bag, tin, drum...", key=f"inv_ovr_new_container_{idx}")
 
         st.markdown("---")
-        if unsorted_count:
-            st.caption(f"Sort the {unsorted_count} new item{'s' if unsorted_count != 1 else ''} above to apply this invoice.")
-        if st.button("Apply confirmed changes", type="primary", disabled=unsorted_count > 0):
+        if st.button("Apply confirmed changes"):
+          try:
             conn = db.get_connection()
 
             # Step 1: resolve the supplier
@@ -3987,6 +3941,9 @@ elif page == "Invoices":
                         size_label = f"{display_qty:g}{display_unit}" + (f" {container}" if container else "")
                         categories = st.session_state.get(f"inv_new_ing_category_{idx}", [])
                         category_str = ", ".join(categories) if categories else ""
+                        # Use manually-entered price if provided, otherwise fall back to scanned price
+                        _auto_price = row.get("unit_price", row["new_price"]) * display_qty
+                        final_price = st.session_state.get(f"inv_new_ing_price_{idx}", _auto_price)
                         if new_name and purchase_qty > 0:
                             conn.execute("""
                                 INSERT INTO ingredients
@@ -4001,7 +3958,7 @@ elif page == "Invoices":
                                 size_label,
                                 purchase_qty,
                                 base_unit,
-                                row.get("unit_price", row["new_price"]) * display_qty,  # total pack price
+                                final_price,
                                 st.session_state.get(f"inv_new_ing_recipe_unit_{idx}", 1.0),
                                 date.today().isoformat()
                             ))
@@ -4036,6 +3993,8 @@ elif page == "Invoices":
                         size_label = f"{display_qty:g}{display_unit}" + (f" {container}" if container else "")
                         categories = st.session_state.get(f"inv_ovr_new_category_{idx}", [])
                         category_str = ", ".join(categories) if categories else ""
+                        _ovr_auto_price = row.get("unit_price", row["new_price"]) * display_qty
+                        ovr_final_price = st.session_state.get(f"inv_ovr_new_price_{idx}", _ovr_auto_price)
                         if new_name and purchase_qty > 0:
                             conn.execute("""
                                 INSERT INTO ingredients
@@ -4046,7 +4005,7 @@ elif page == "Invoices":
                             """, (
                                 new_name, category_str, resolved_supplier_id,
                                 size_label,
-                                purchase_qty, base_unit, row["new_price"],
+                                purchase_qty, base_unit, ovr_final_price,
                                 st.session_state.get(f"inv_ovr_new_recipe_unit_{idx}", 1.0),
                                 date.today().isoformat()
                             ))
@@ -4058,28 +4017,32 @@ elif page == "Invoices":
                     elif override and override != "-- keep current match --":
                         # Apply the price update to the override target instead
                         if st.session_state.get(f"inv_apply_{idx}"):
+                            _use_price = st.session_state.get(f"inv_price_override_{idx}", row["new_price"])
                             old = conn.execute("SELECT purchase_price FROM ingredients WHERE name = ?", (override,)).fetchone()
                             old_price = old["purchase_price"] if old else None
-                            pct = ((row["new_price"] - old_price) / old_price * 100) if old_price else None
+                            pct = ((_use_price - old_price) / old_price * 100) if old_price else None
                             conn.execute(
                                 "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
-                                (row["new_price"], date.today().isoformat(), override)
+                                (_use_price, date.today().isoformat(), override)
                             )
                             conn.execute(
                                 "INSERT INTO invoice_log (scanned_at, supplier_name, ingredient_name, old_price, new_price, pct_change, applied_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
                                 (date.today().isoformat(), log_supplier_label, override,
-                                 old_price, row["new_price"], pct, current_user["name"])
+                                 old_price, _use_price, pct, current_user["name"])
                             )
                             applied_count += 1
                     elif st.session_state.get(f"inv_apply_{idx}"):
+                        _use_price = st.session_state.get(f"inv_price_override_{idx}", row["new_price"])
+                        old_pct = (((_use_price - row["old_price"]) / row["old_price"] * 100)
+                                   if row["old_price"] else row["pct_change"])
                         conn.execute(
                             "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
-                            (row["new_price"], date.today().isoformat(), row["matched_ingredient"])
+                            (_use_price, date.today().isoformat(), row["matched_ingredient"])
                         )
                         conn.execute(
                             "INSERT INTO invoice_log (scanned_at, supplier_name, ingredient_name, old_price, new_price, pct_change, applied_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
                             (date.today().isoformat(), log_supplier_label, row["matched_ingredient"],
-                             row["old_price"], row["new_price"], row["pct_change"], current_user["name"])
+                             row["old_price"], _use_price, old_pct, current_user["name"])
                         )
                         applied_count += 1
 
@@ -4089,6 +4052,8 @@ elif page == "Invoices":
             st.success(f"Applied {applied_count} update(s).")
             del st.session_state.invoice_scan
             st.rerun()
+          except Exception as _apply_err:
+            st.error(f"Error applying changes — please screenshot this and report it: {_apply_err}")
 
     st.divider()
     st.subheader("Recent price changes from invoices")
