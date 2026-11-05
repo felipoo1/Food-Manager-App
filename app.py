@@ -11,9 +11,7 @@ import pandas as pd
 from datetime import date, datetime, timedelta
 import database as db
 import base64
-import json
 from app_icon import ICON_BASE64
-from streamlit_cookies_controller import CookieController
 
 _is_customer_form = bool(st.query_params.get("menu", ""))
 
@@ -22,14 +20,6 @@ st.set_page_config(
     layout="wide",
     page_icon="🍽️" if _is_customer_form else "☕"
 )
-
-# Cookie-based session persistence — keeps users logged in across page refreshes.
-# CookieController uses a React component that needs ONE render cycle to mount,
-# so we do a single silent rerun on a fresh session before reading any cookies.
-_cookies = CookieController()
-if "tpc_cookie_ready" not in st.session_state:
-    st.session_state.tpc_cookie_ready = True
-    st.rerun()
 
 if _is_customer_form:
     # Inject Open Graph meta tags so when the customer shares the link on
@@ -403,14 +393,6 @@ if "current_user" not in st.session_state:
 if "pending_shared_login" not in st.session_state:
     st.session_state.pending_shared_login = False
 
-# Restore session from cookie (after the cookie component has mounted)
-if st.session_state.current_user is None:
-    _saved = _cookies.get("tpc_session")
-    if _saved:
-        try:
-            st.session_state.current_user = json.loads(_saved)
-        except Exception:
-            pass
 
 if st.session_state.current_user is None:
     st.write("")
@@ -441,7 +423,6 @@ if st.session_state.current_user is None:
                         _user = {"id": chosen["id"], "name": chosen["name"], "role": chosen["role"]}
                         st.session_state.current_user = _user
                         st.session_state.pending_shared_login = False
-                        _cookies.set("tpc_session", json.dumps(_user), max_age=timedelta(days=14))
                         st.rerun()
 
             else:
@@ -465,7 +446,6 @@ if st.session_state.current_user is None:
                                 "id": staff_match["id"], "name": staff_match["name"], "role": staff_match["role"]
                             }
                             st.session_state.current_user = _user
-                            _cookies.set("tpc_session", json.dumps(_user), max_age=timedelta(days=14))
                             st.rerun()
                 st.caption("Forgot your PIN? Ask the Owner to reset it for you, or use the Owner account to reset your own from Settings → Change my PIN once logged in.")
     st.stop()
@@ -610,7 +590,6 @@ if st.sidebar.button("Change my PIN", icon=":material/lock_reset:", type="tertia
     st.rerun()
 if st.sidebar.button("Log out", icon=":material/logout:", type="tertiary", width="stretch"):
     st.session_state.current_user = None
-    _cookies.remove("tpc_session")
     st.rerun()
 
 # ---------- Notifications panel (available to everyone) ----------
