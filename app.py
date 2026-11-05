@@ -3815,8 +3815,8 @@ elif page == "Invoices":
                     with st.container(key=f"newcard-{idx}"):
                         st.markdown(newitem_head_html(
                             row["description"],
-                            f"{parsed_qty:g} {parsed_unit} · ${unit_price:.2f} per {parsed_unit}",
-                            f"${unit_price * parsed_qty:.2f}", status[0], status[1]
+                            f"{parsed_qty:g} {parsed_unit}",
+                            f"${unit_price:.2f}", status[0], status[1]
                         ), unsafe_allow_html=True)
                         with st.container(key=f"seg-{idx}"):
                             st.segmented_control(
@@ -3859,7 +3859,7 @@ elif page == "Invoices":
                                     help="Total cost for one pack (from invoice). Edit if wrong.",
                                     key=f"inv_new_ing_price_{idx}"
                                 )
-                            st.markdown(unit_cost_strip_html(f"${unit_price:.2f} / {parsed_unit}", supplier_label), unsafe_allow_html=True)
+                            st.markdown(unit_cost_strip_html(f"${unit_price:.2f} per pack ({parsed_qty:g} {parsed_unit})", supplier_label), unsafe_allow_html=True)
                             with st.expander("More details"):
                                 st.number_input(
                                     "Recipe portion size", min_value=0.0, step=1.0, value=1.0,
