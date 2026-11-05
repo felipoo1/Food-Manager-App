@@ -1147,7 +1147,29 @@ if page == "Master Stock List":
 
     # ---- bulk edit button (only on category overview) ----
     if st.session_state.stock_mode == "list" and st.session_state.stock_cat is None:
-        if st.button("Bulk edit supplier / category", type="tertiary", key="bulk_edit_btn"):
+        from theme_css import N200, N700, N800, INK
+        st.markdown(f"""
+<style>
+div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
+.st-key-bulk_edit_btn button {{
+    background: {N200} !important;
+    border: 1.5px solid transparent !important;
+    border-radius: 10px !important;
+    color: {N800} !important;
+    font-family: Nunito, sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 0.88rem !important;
+    padding: 7px 16px !important;
+    box-shadow: none !important;
+    letter-spacing: 0.01em !important;
+}}
+.st-key-bulk_edit_btn button:hover {{
+    background: #dcd3c4 !important;
+    color: {INK} !important;
+}}
+</style>
+""", unsafe_allow_html=True)
+        if st.button("⊞  Bulk edit supplier / category", key="bulk_edit_btn"):
             st.session_state.stock_mode = "bulk"
             st.rerun()
 
@@ -1185,24 +1207,43 @@ if page == "Master Stock List":
             extras = [c for c in sorted(cat_counts) if c not in categories_all and c != "Uncategorised"]
             cat_order = known + extras + (["Uncategorised"] if uncategorised_n else [])
 
+            # Inject tile button styles once
+            st.markdown(f"""
+<style>
+.st-key-grid4-categories div[data-testid="stButton"] button {{
+    background: {CARD_INNER} !important;
+    border: 2px solid {CARD} !important;
+    border-radius: 14px !important;
+    padding: 14px 16px !important;
+    text-align: left !important;
+    white-space: pre-wrap !important;
+    height: auto !important;
+    min-height: 72px !important;
+    line-height: 1.5 !important;
+    color: {INK} !important;
+    font-family: Nunito, sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 1rem !important;
+    box-shadow: none !important;
+}}
+.st-key-grid4-categories div[data-testid="stButton"] button:hover {{
+    border-color: {ACCENT} !important;
+    background: {CARD} !important;
+}}
+.st-key-open-cat-Uncategorised button {{
+    border-color: {ACCENT} !important;
+}}
+</style>
+""", unsafe_allow_html=True)
+
             with st.container(key="grid4-categories"):
                 for cat in cat_order:
                     n = cat_counts.get(cat, 0)
-                    is_uncategorised = cat == "Uncategorised"
-                    border_color = ACCENT if is_uncategorised else CARD
-                    tile_html = (
-                        f'<div style="padding:14px 16px;border-radius:14px;background:{CARD_INNER};'
-                        f'border:2px solid {border_color};cursor:pointer">'
-                        f'<div style="font-family:Nunito,sans-serif;font-weight:800;font-size:1.02rem;'
-                        f'color:{INK};line-height:1.25">{cat}</div>'
-                        f'<div style="font-size:0.78rem;color:{N700};margin-top:3px">'
-                        f'{n} ingredient{"s" if n != 1 else ""}</div></div>'
-                    )
-                    with st.container(key=f"catcard-{cat}"):
-                        st.markdown(tile_html, unsafe_allow_html=True)
-                        if st.button("Open", type="tertiary", key=f"open-cat-{cat}"):
-                            st.session_state.stock_cat = cat
-                            st.rerun()
+                    cat_slug = cat.replace(" ", "-").replace("&", "and")
+                    label = f"{cat}\n{n} ingredient{'s' if n != 1 else ''}"
+                    if st.button(label, use_container_width=True, key=f"open-cat-{cat_slug}"):
+                        st.session_state.stock_cat = cat
+                        st.rerun()
 
         else:
             # ---- INGREDIENTS IN CATEGORY ----
