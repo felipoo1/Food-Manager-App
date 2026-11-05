@@ -4234,6 +4234,12 @@ elif page == "Invoices":
             unit_price = row.get("unit_price", row["new_price"])
             is_alert = row["status"] == "alert"
 
+            # For PKT/PACK items the invoice price is per-pack, not per-gram
+            import re as _re2
+            _pk_text = (row.get("pack_size") or "").strip().upper()
+            _is_pkt = bool(_re2.search(r"\b(PKT|PACK|EA|EACH|UNIT)\b", _pk_text))
+            display_unit = "pack" if _is_pkt else parsed_unit
+
             # Status badge colours
             badge_bg = _ACCENT_100 if is_alert else _OK_BG
             badge_fg = _ACCENT_700 if is_alert else _OK_FG
@@ -4276,23 +4282,37 @@ elif page == "Invoices":
                     f'border-radius:0 0 10px 10px;margin-bottom:4px">'
                     f'<div style="font-size:0.82rem;color:{_N700};margin-bottom:6px">'
                     f'<span style="font-weight:600;color:{_N800}">${unit_price:.2f}</span>'
-                    f' per {parsed_unit} &nbsp;·&nbsp; {price_line}</div>'
+                    f' per {display_unit} &nbsp;·&nbsp; {price_line}</div>'
                     f'</div>',
                     unsafe_allow_html=True
                 )
 
                 apply_checked = st.checkbox(
                     f"Apply price update to **{row['matched_ingredient']}**",
-                    value=(row["status"] in ("auto", "alert")),
+                    value=(row["status"] == "auto"),   # alert items require explicit opt-in
                     key=f"inv_apply_{idx}"
                 )
-                if apply_checked:
+                # Price input always visible so it can be corrected before confirming
+                _default_price = float(round(new_p, 2))
+                pc1, pc2 = st.columns([2, 1])
+                with pc1:
                     st.number_input(
-                        "Correct price if wrong ($)", min_value=0.0, step=0.01, format="%.2f",
-                        value=float(round(new_p, 2)),
-                        help="Edit if the scanned price is incorrect.",
+                        f"New purchase price per {display_unit} ($)",
+                        min_value=0.0, step=0.01, format="%.2f",
+                        value=_default_price,
+                        help="Edit this if the scanned price is wrong before confirming.",
                         key=f"inv_price_override_{idx}"
                     )
+                with pc2:
+                    if old_p:
+                        _live_price = st.session_state.get(f"inv_price_override_{idx}", _default_price)
+                        _live_pct = ((_live_price - old_p) / old_p * 100) if old_p else 0
+                        _chg_color = _ACCENT_700 if abs(_live_pct) >= 10 else _N700
+                        st.markdown(
+                            f'<div style="padding-top:28px;font-size:0.8rem;color:{_chg_color};font-weight:600">'
+                            f'Was ${old_p:.2f} · {_live_pct:+.1f}%</div>',
+                            unsafe_allow_html=True
+                        )
 
                 with st.expander("Wrong match? Change it"):
                     override_options = ["-- keep current match --", "+ Create new ingredient"] + all_ingredient_names
