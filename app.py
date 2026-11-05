@@ -1594,7 +1594,10 @@ div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
             default_unit, default_pack_qty = _default_pack_display(current["base_unit"], current["purchase_qty"] or 0)
 
             e_name = st.text_input("Ingredient name", value=current["name"], key=f"edit_ing_name_{selected_id}")
-            e_category = st.text_input("Category", value=current["category"] or "", key=f"edit_ing_category_{selected_id}")
+            EDIT_CATEGORIES_LIST = ["Dairy", "Dry Goods", "Frozen", "Meat & Seafood", "Pantry", "Produce", "Other"]
+            _cur_cat = current["category"] or ""
+            _cat_idx = EDIT_CATEGORIES_LIST.index(_cur_cat) if _cur_cat in EDIT_CATEGORIES_LIST else 0
+            e_category = st.selectbox("Category", EDIT_CATEGORIES_LIST, index=_cat_idx, key=f"edit_ing_category_{selected_id}")
 
             st.write("**How do you buy this from the supplier?**")
             pc1, pc2, pc3 = st.columns(3)
