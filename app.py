@@ -3852,11 +3852,11 @@ elif page == "Invoices":
                                 st.number_input(f"Pack size ({selected_unit})", min_value=0.0, step=1.0,
                                                 value=parsed_qty, key=f"inv_new_ing_display_qty_{idx}")
                             with u3:
-                                _scanned_pack_price = round(unit_price * parsed_qty, 2)
+                                _scanned_pack_price = round(unit_price, 2)
                                 st.number_input(
                                     "Purchase price ($)", min_value=0.0, step=0.01, format="%.2f",
                                     value=float(_scanned_pack_price),
-                                    help="Total price for this pack. Edit if the scanned price is wrong.",
+                                    help="Total cost for one pack (from invoice). Edit if wrong.",
                                     key=f"inv_new_ing_price_{idx}"
                                 )
                             st.markdown(unit_cost_strip_html(f"${unit_price:.2f} / {parsed_unit}", supplier_label), unsafe_allow_html=True)
@@ -3929,11 +3929,11 @@ elif page == "Invoices":
                     with nc2:
                         ovr_unit = st.selectbox("Unit", unit_keys, index=default_unit_idx, key=f"inv_ovr_new_display_unit_{idx}")
                         st.number_input(f"Purchase quantity ({ovr_unit})", min_value=0.0, step=1.0, value=parsed_qty, key=f"inv_ovr_new_display_qty_{idx}")
-                        _ovr_pack_price = round(unit_price * parsed_qty, 2)
+                        _ovr_pack_price = round(unit_price, 2)
                         st.number_input(
                             "Purchase price ($)", min_value=0.0, step=0.01, format="%.2f",
                             value=float(_ovr_pack_price),
-                            help="Total price for this pack. Edit if the scanned price is wrong.",
+                            help="Total cost for one pack (from invoice). Edit if wrong.",
                             key=f"inv_ovr_new_price_{idx}"
                         )
                     with nc3:
@@ -4023,7 +4023,7 @@ elif page == "Invoices":
                                 size_label,
                                 purchase_qty,
                                 base_unit,
-                                st.session_state.get(f"inv_new_ing_price_{idx}", row.get("unit_price", row["new_price"]) * display_qty),
+                                st.session_state.get(f"inv_new_ing_price_{idx}", row.get("unit_price", row["new_price"])),
                                 st.session_state.get(f"inv_new_ing_recipe_unit_{idx}", 1.0),
                                 date.today().isoformat()
                             ))
@@ -4069,7 +4069,7 @@ elif page == "Invoices":
                                 new_name, category_str, resolved_supplier_id,
                                 size_label,
                                 purchase_qty, base_unit,
-                                st.session_state.get(f"inv_ovr_new_price_{idx}", row.get("unit_price", row["new_price"]) * display_qty),
+                                st.session_state.get(f"inv_ovr_new_price_{idx}", row.get("unit_price", row["new_price"])),
                                 st.session_state.get(f"inv_ovr_new_recipe_unit_{idx}", 1.0),
                                 date.today().isoformat()
                             ))
