@@ -1118,25 +1118,38 @@ elif page == "Stock Take":
 if page == "Master Stock List":
     if "stock_mode" not in st.session_state:
         st.session_state.stock_mode = "list"
+    if "stock_cat" not in st.session_state:
+        st.session_state.stock_cat = None
 
-    if page_header(
-        "Master stock list",
-        "Every ingredient, its price and its cost per recipe unit." if st.session_state.stock_mode == "list" else "",
-        "Add ingredient", key="add_ingredient_btn",
-    ):
+    # ---- resolve header state ----
+    _in_cat = st.session_state.stock_mode == "list" and st.session_state.stock_cat is not None
+    _header_caption = (
+        st.session_state.stock_cat if _in_cat
+        else ("Every ingredient organised by category." if st.session_state.stock_mode == "list" else "")
+    )
+    if page_header("Master stock list", _header_caption, "Add ingredient", key="add_ingredient_btn"):
         st.session_state.stock_mode = "add"
+        st.session_state.stock_cat = None
         st.rerun()
 
-    if st.session_state.stock_mode == "list":
+    # ---- back navigation ----
+    if _in_cat:
+        if st.button("← All categories", key="back_to_cats"):
+            st.session_state.stock_cat = None
+            st.rerun()
+        st.write("")
+    elif st.session_state.stock_mode not in ("list",):
+        if st.button("← Back to list"):
+            st.session_state.stock_mode = "list"
+            st.session_state.stock_cat = None
+            st.rerun()
+        st.write("")
+
+    # ---- bulk edit button (only on category overview) ----
+    if st.session_state.stock_mode == "list" and st.session_state.stock_cat is None:
         if st.button("Bulk edit supplier / category", type="tertiary", key="bulk_edit_btn"):
             st.session_state.stock_mode = "bulk"
             st.rerun()
-
-    if st.session_state.stock_mode not in ("list",):
-        if st.button("← Back to list"):
-            st.session_state.stock_mode = "list"
-            st.rerun()
-        st.write("")
 
     # ---------------- LIST VIEW ----------------
     if st.session_state.stock_mode == "list":
@@ -1152,16 +1165,49 @@ if page == "Master Stock List":
         conn.close()
 
         if not ingredients:
-            st.info("No ingredients yet. Click \"Add New Ingredient\" above to add your first one.")
-        else:
-            categories = sorted(set(r["category"] or "Uncategorised" for r in ingredients))
-            with st.container(key="pills-mastercat"):
-                chosen_cat = st.pills(
-                    "Category", ["All"] + categories, default="All",
-                    label_visibility="collapsed", key="master_cat_filter",
-                ) or "All"
-            shown = [r for r in ingredients if chosen_cat == "All" or (r["category"] or "Uncategorised") == chosen_cat]
+            st.info("No ingredients yet. Click \"Add ingredient\" above to add your first one.")
 
+        elif st.session_state.stock_cat is None:
+            # ---- CATEGORY OVERVIEW ----
+            from theme_css import CARD, CARD_INNER, N700, INK, ACCENT
+            categories_all = ["Dairy", "Dry Goods", "Frozen", "Meat & Seafood", "Pantry", "Produce", "Other"]
+            cat_counts = {}
+            for r in ingredients:
+                cat = r["category"] or "Uncategorised"
+                cat_counts[cat] = cat_counts.get(cat, 0) + 1
+
+            uncategorised_n = cat_counts.get("Uncategorised", 0)
+            if uncategorised_n:
+                st.warning(f"{uncategorised_n} ingredient(s) have no category. Click **Uncategorised** below to fix them.")
+
+            # Build ordered list: known categories first, then any extras, then Uncategorised last
+            known = [c for c in categories_all if c in cat_counts]
+            extras = [c for c in sorted(cat_counts) if c not in categories_all and c != "Uncategorised"]
+            cat_order = known + extras + (["Uncategorised"] if uncategorised_n else [])
+
+            with st.container(key="grid4-categories"):
+                for cat in cat_order:
+                    n = cat_counts.get(cat, 0)
+                    is_uncategorised = cat == "Uncategorised"
+                    border_color = ACCENT if is_uncategorised else CARD
+                    tile_html = (
+                        f'<div style="padding:14px 16px;border-radius:14px;background:{CARD_INNER};'
+                        f'border:2px solid {border_color};cursor:pointer">'
+                        f'<div style="font-family:Nunito,sans-serif;font-weight:800;font-size:1.02rem;'
+                        f'color:{INK};line-height:1.25">{cat}</div>'
+                        f'<div style="font-size:0.78rem;color:{N700};margin-top:3px">'
+                        f'{n} ingredient{"s" if n != 1 else ""}</div></div>'
+                    )
+                    with st.container(key=f"catcard-{cat}"):
+                        st.markdown(tile_html, unsafe_allow_html=True)
+                        if st.button("Open", type="tertiary", key=f"open-cat-{cat}"):
+                            st.session_state.stock_cat = cat
+                            st.rerun()
+
+        else:
+            # ---- INGREDIENTS IN CATEGORY ----
+            chosen_cat = st.session_state.stock_cat
+            shown = [r for r in ingredients if (r["category"] or "Uncategorised") == chosen_cat]
             with st.container(key="grid4-ingredients"):
                 for r in shown:
                     cost = db.cost_per_recipe_unit(r)
@@ -1272,8 +1318,13 @@ if page == "Master Stock List":
         supplier_options = get_supplier_options()
         UNIT_MAP = {"Kg": ("g", 1000), "g": ("g", 1), "L": ("ml", 1000), "ml": ("ml", 1), "Each": ("each", 1)}
 
+        CATEGORIES_LIST = ["Dairy", "Dry Goods", "Frozen", "Meat & Seafood", "Pantry", "Produce", "Other"]
         name = st.text_input("Ingredient name", key="add_ing_name")
-        category = st.text_input("Category (e.g. Dairy, Meat, Produce)", key="add_ing_category")
+        # Pre-select the current category if drilling in from a category view
+        _default_cat_idx = 0
+        if st.session_state.get("stock_cat") and st.session_state.stock_cat in CATEGORIES_LIST:
+            _default_cat_idx = CATEGORIES_LIST.index(st.session_state.stock_cat)
+        category = st.selectbox("Category", CATEGORIES_LIST, index=_default_cat_idx, key="add_ing_category")
 
         st.write("**How do you buy this from the supplier?**")
         pc1, pc2, pc3 = st.columns(3)
