@@ -1247,8 +1247,34 @@ div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
 
         else:
             # ---- INGREDIENTS IN CATEGORY ----
+            from theme_css import N200, N800, INK
             chosen_cat = st.session_state.stock_cat
             shown = [r for r in ingredients if (r["category"] or "Uncategorised") == chosen_cat]
+
+            st.markdown(f"""
+<style>
+.st-key-bulk_edit_cat_btn button {{
+    background: {N200} !important;
+    border: 1.5px solid transparent !important;
+    border-radius: 10px !important;
+    color: {N800} !important;
+    font-family: Nunito, sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 0.88rem !important;
+    padding: 7px 16px !important;
+    box-shadow: none !important;
+}}
+.st-key-bulk_edit_cat_btn button:hover {{
+    background: #dcd3c4 !important;
+    color: {INK} !important;
+}}
+</style>
+""", unsafe_allow_html=True)
+            if st.button("⊞  Bulk edit this category", key="bulk_edit_cat_btn"):
+                st.session_state["bulk_prefill_cat"] = chosen_cat
+                st.session_state.stock_mode = "bulk"
+                st.rerun()
+
             with st.container(key="grid4-ingredients"):
                 for r in shown:
                     cost = db.cost_per_recipe_unit(r)
@@ -1287,11 +1313,14 @@ div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
         supplier_options = get_supplier_options()
         CATEGORIES_LIST = ["Dairy", "Dry Goods", "Frozen", "Meat & Seafood", "Pantry", "Produce", "Other"]
 
-        # Filters
+        # Filters — pre-select category if arriving from a category drill-down
+        _prefill_cat = st.session_state.pop("bulk_prefill_cat", None)
         fc1, fc2 = st.columns(2)
         with fc1:
             categories = sorted(set(r["category"] or "Uncategorised" for r in ingredients))
-            filter_cat = st.selectbox("Filter by category", ["All"] + categories, key="bulk_filter_cat")
+            _cat_opts = ["All"] + categories
+            _cat_default = _cat_opts.index(_prefill_cat) if _prefill_cat and _prefill_cat in _cat_opts else 0
+            filter_cat = st.selectbox("Filter by category", _cat_opts, index=_cat_default, key="bulk_filter_cat")
         with fc2:
             supplier_names = ["All"] + sorted(set(r["primary_supplier_name"] or "No supplier" for r in ingredients))
             filter_sup = st.selectbox("Filter by supplier", supplier_names, key="bulk_filter_sup")
