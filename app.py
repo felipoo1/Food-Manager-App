@@ -1300,7 +1300,8 @@ div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
 
     # ---------------- BULK EDIT VIEW ----------------
     elif st.session_state.stock_mode == "bulk":
-        st.subheader("Bulk edit: supplier & category")
+        from theme_css import CARD, CARD_INNER, N200, N300, N700, N800, INK, ACCENT
+
         conn = db.get_connection()
         ingredients = conn.execute("""
             SELECT i.*, s1.name AS primary_supplier_name
@@ -1313,17 +1314,91 @@ div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
         supplier_options = get_supplier_options()
         CATEGORIES_LIST = ["Dairy", "Dry Goods", "Frozen", "Meat & Seafood", "Pantry", "Produce", "Other"]
 
+        # Inject bulk-edit styles
+        st.markdown(f"""
+<style>
+/* Filter card */
+.st-key-bulk-filter-card {{
+    background: {CARD_INNER} !important;
+    border: 1.5px solid {CARD} !important;
+    border-radius: 16px !important;
+    padding: 4px 8px 10px 8px !important;
+}}
+.st-key-bulk-filter-card [data-baseweb="select"] > div:first-child {{
+    background: #f9f4ed !important;
+    border-color: {N300} !important;
+    border-radius: 10px !important;
+}}
+/* Select all / Clear all pills */
+.st-key-bulk-sel-all button, .st-key-bulk-sel-none button {{
+    background: {N200} !important;
+    border: 1.5px solid transparent !important;
+    border-radius: 20px !important;
+    color: {N800} !important;
+    font-family: Nunito, sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 0.8rem !important;
+    padding: 5px 14px !important;
+    box-shadow: none !important;
+}}
+.st-key-bulk-sel-all button:hover, .st-key-bulk-sel-none button:hover {{
+    background: {N300} !important;
+    color: {INK} !important;
+}}
+/* Ingredient rows */
+.st-key-bulk-ing-list [data-testid="stCheckbox"] {{
+    background: {CARD_INNER} !important;
+    border: 1.5px solid {CARD} !important;
+    border-radius: 12px !important;
+    padding: 10px 14px !important;
+    margin-bottom: 4px !important;
+}}
+.st-key-bulk-ing-list [data-testid="stCheckbox"]:hover {{
+    border-color: {N700} !important;
+}}
+/* Apply card */
+.st-key-bulk-apply-card {{
+    background: {CARD_INNER} !important;
+    border: 1.5px solid {CARD} !important;
+    border-radius: 16px !important;
+    padding: 4px 8px 12px 8px !important;
+    margin-top: 8px !important;
+}}
+.st-key-bulk-apply-card [data-baseweb="select"] > div:first-child {{
+    background: #f9f4ed !important;
+    border-color: {N300} !important;
+    border-radius: 10px !important;
+}}
+/* Apply button */
+.st-key-bulk-apply-btn button {{
+    background: {ACCENT} !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 20px !important;
+    font-family: Nunito, sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 0.88rem !important;
+    padding: 8px 22px !important;
+    box-shadow: none !important;
+}}
+.st-key-bulk-apply-btn button:hover {{ background: #8c491a !important; }}
+.st-key-bulk-apply-btn button:disabled {{ opacity: 0.4 !important; }}
+</style>
+""", unsafe_allow_html=True)
+
         # Filters — pre-select category if arriving from a category drill-down
         _prefill_cat = st.session_state.pop("bulk_prefill_cat", None)
-        fc1, fc2 = st.columns(2)
-        with fc1:
-            categories = sorted(set(r["category"] or "Uncategorised" for r in ingredients))
-            _cat_opts = ["All"] + categories
-            _cat_default = _cat_opts.index(_prefill_cat) if _prefill_cat and _prefill_cat in _cat_opts else 0
-            filter_cat = st.selectbox("Filter by category", _cat_opts, index=_cat_default, key="bulk_filter_cat")
-        with fc2:
-            supplier_names = ["All"] + sorted(set(r["primary_supplier_name"] or "No supplier" for r in ingredients))
-            filter_sup = st.selectbox("Filter by supplier", supplier_names, key="bulk_filter_sup")
+
+        with st.container(key="bulk-filter-card"):
+            fc1, fc2 = st.columns(2)
+            with fc1:
+                categories = sorted(set(r["category"] or "Uncategorised" for r in ingredients))
+                _cat_opts = ["All"] + categories
+                _cat_default = _cat_opts.index(_prefill_cat) if _prefill_cat and _prefill_cat in _cat_opts else 0
+                filter_cat = st.selectbox("Filter by category", _cat_opts, index=_cat_default, key="bulk_filter_cat")
+            with fc2:
+                supplier_names = ["All"] + sorted(set(r["primary_supplier_name"] or "No supplier" for r in ingredients))
+                filter_sup = st.selectbox("Filter by supplier", supplier_names, key="bulk_filter_sup")
 
         shown = [r for r in ingredients
                  if (filter_cat == "All" or (r["category"] or "Uncategorised") == filter_cat)
@@ -1332,55 +1407,59 @@ div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
         if not shown:
             st.info("No ingredients match this filter.")
         else:
-            st.caption(f"{len(shown)} ingredient(s) shown. Tick the ones you want to change.")
-
-            # Select all / none
-            sa1, sa2 = st.columns(2)
+            # Count + select/clear row
+            cnt_col, sa1, sa2 = st.columns([3, 1, 1])
+            with cnt_col:
+                st.caption(f"{len(shown)} ingredient(s) shown")
             with sa1:
-                if st.button("Select all", key="bulk_sel_all"):
+                if st.button("Select all", key="bulk-sel-all"):
                     for r in shown:
                         st.session_state[f"bulk_chk_{r['id']}"] = True
             with sa2:
-                if st.button("Clear all", key="bulk_sel_none"):
+                if st.button("Clear all", key="bulk-sel-none"):
                     for r in shown:
                         st.session_state[f"bulk_chk_{r['id']}"] = False
 
             # Ingredient checklist
-            for r in shown:
-                sup_label = r["primary_supplier_name"] or "No supplier"
-                cat_label = r["category"] or "Uncategorised"
-                st.checkbox(
-                    f"**{r['name']}** — {cat_label} · {sup_label}",
-                    key=f"bulk_chk_{r['id']}"
-                )
+            with st.container(key="bulk-ing-list"):
+                for r in shown:
+                    sup_label = r["primary_supplier_name"] or "No supplier"
+                    cat_label = r["category"] or "Uncategorised"
+                    st.checkbox(
+                        f"**{r['name']}** — {cat_label} · {sup_label}",
+                        key=f"bulk_chk_{r['id']}"
+                    )
 
             selected_ids = [r["id"] for r in shown if st.session_state.get(f"bulk_chk_{r['id']}", False)]
-            st.write(f"**{len(selected_ids)} selected**")
+            n_sel = len(selected_ids)
 
-            st.divider()
-            st.write("**Apply changes to selected ingredients:**")
-            bc1, bc2 = st.columns(2)
-            with bc1:
-                new_supplier_key = st.selectbox("Change supplier to", ["— no change —"] + list(supplier_options.keys()), key="bulk_new_supplier")
-            with bc2:
-                new_category = st.selectbox("Change category to", ["— no change —"] + CATEGORIES_LIST, key="bulk_new_category")
+            # Apply card
+            with st.container(key="bulk-apply-card"):
+                st.markdown(f"""
+<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0 10px 0;">
+  <span style="font-family:Inter,sans-serif;font-size:0.72rem;font-weight:600;letter-spacing:0.07em;text-transform:uppercase;color:{N700};">Apply to selected</span>
+  <span style="display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;border-radius:20px;background:{"#c67139" if n_sel > 0 else N300};color:{"white" if n_sel > 0 else N700};font-size:0.75rem;font-weight:800;padding:0 6px;font-family:Inter,sans-serif;">{n_sel}</span>
+</div>
+""", unsafe_allow_html=True)
+                bc1, bc2 = st.columns(2)
+                with bc1:
+                    new_supplier_key = st.selectbox("Change supplier to", ["— no change —"] + list(supplier_options.keys()), key="bulk_new_supplier")
+                with bc2:
+                    new_category = st.selectbox("Change category to", ["— no change —"] + CATEGORIES_LIST, key="bulk_new_category")
 
-            if st.button("Apply to selected", type="primary", key="bulk_apply_btn", disabled=len(selected_ids) == 0):
-                conn = db.get_connection()
-                updated = 0
-                for ing_id in selected_ids:
-                    if new_supplier_key != "— no change —":
-                        conn.execute("UPDATE ingredients SET primary_supplier_id=? WHERE id=?",
-                                     (supplier_options[new_supplier_key], ing_id))
-                        updated += 1
-                    if new_category != "— no change —":
-                        conn.execute("UPDATE ingredients SET category=? WHERE id=?",
-                                     (new_category, ing_id))
-                        updated += 1
-                conn.commit()
-                conn.close()
-                st.success(f"Updated {len(selected_ids)} ingredient(s).")
-                st.rerun()
+                if st.button("Apply", key="bulk-apply-btn", disabled=n_sel == 0):
+                    conn = db.get_connection()
+                    for ing_id in selected_ids:
+                        if new_supplier_key != "— no change —":
+                            conn.execute("UPDATE ingredients SET primary_supplier_id=? WHERE id=?",
+                                         (supplier_options[new_supplier_key], ing_id))
+                        if new_category != "— no change —":
+                            conn.execute("UPDATE ingredients SET category=? WHERE id=?",
+                                         (new_category, ing_id))
+                    conn.commit()
+                    conn.close()
+                    st.success(f"Updated {n_sel} ingredient(s).")
+                    st.rerun()
 
     # ---------------- ADD VIEW ----------------
     elif st.session_state.stock_mode == "add":
