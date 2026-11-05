@@ -4161,6 +4161,24 @@ elif page == "Invoices":
                         elif mode == MODE_MATCH:
                             st.selectbox("Same as", all_ingredient_names, index=None,
                                          placeholder="Choose an item…", key=f"inv_match_pick_{idx}")
+                            # Still show pack details so the price/weight is confirmed before saving
+                            unit_keys = list(INV_UNIT_MAP.keys())
+                            default_unit_idx = unit_keys.index(parsed_unit) if parsed_unit in unit_keys else 0
+                            u1, u2, u3 = st.columns(3)
+                            with u1:
+                                selected_unit_m = st.selectbox("Unit", unit_keys, index=default_unit_idx, key=f"inv_match_unit_{idx}")
+                            with u2:
+                                st.number_input(f"Pack size ({selected_unit_m})", min_value=0.0, step=1.0,
+                                                value=parsed_qty, key=f"inv_match_qty_{idx}")
+                            with u3:
+                                _scanned_pack_price_m = round(unit_price, 2)
+                                st.number_input(
+                                    "Purchase price ($)", min_value=0.0, step=0.01, format="%.2f",
+                                    value=float(_scanned_pack_price_m),
+                                    help="Total cost for one pack (from invoice). Edit if wrong.",
+                                    key=f"inv_match_price_{idx}"
+                                )
+                            st.markdown(unit_cost_strip_html(f"${unit_price:.2f} per pack ({parsed_qty:g} {parsed_unit})", supplier_label), unsafe_allow_html=True)
 
                         else:
                             st.markdown(skip_note_html(), unsafe_allow_html=True)
@@ -4325,13 +4343,22 @@ elif page == "Invoices":
                     elif chosen and chosen != "-- skip this item --":
                         old = conn.execute("SELECT purchase_price FROM ingredients WHERE name = ?", (chosen,)).fetchone()
                         old_price = old["purchase_price"] if old else None
+                        # Use user-confirmed price/pack fields from the Match form
+                        _aparsed_qty, _aparsed_unit = parse_pack_size(row["pack_size"], row["description"])
+                        _aunit_price = row.get("unit_price", row["new_price"])
+                        match_price = st.session_state.get(f"inv_match_price_{idx}", _aunit_price)
+                        match_display_unit = st.session_state.get(f"inv_match_unit_{idx}", _aparsed_unit)
+                        match_display_qty = st.session_state.get(f"inv_match_qty_{idx}", _aparsed_qty)
+                        match_base_unit, match_factor = INV_UNIT_MAP.get(match_display_unit, ("g", 1))
+                        match_purchase_qty = match_display_qty * match_factor
+                        match_size_label = f"{match_display_qty:g}{match_display_unit}"
                         conn.execute(
-                            "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
-                            (row["new_price"], date.today().isoformat(), chosen)
+                            "UPDATE ingredients SET purchase_price=?, purchase_qty=?, base_unit=?, purchase_size_label=?, last_updated=? WHERE name=?",
+                            (match_price, match_purchase_qty, match_base_unit, match_size_label, date.today().isoformat(), chosen)
                         )
                         conn.execute(
                             "INSERT INTO invoice_log (scanned_at, supplier_name, ingredient_name, old_price, new_price, pct_change, applied_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                            (date.today().isoformat(), log_supplier_label, chosen, old_price, row["new_price"], None, current_user["name"])
+                            (date.today().isoformat(), log_supplier_label, chosen, old_price, match_price, None, current_user["name"])
                         )
                         applied_count += 1
                 else:
