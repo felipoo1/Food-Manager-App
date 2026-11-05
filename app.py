@@ -4526,15 +4526,27 @@ elif page == "Invoices":
                                 _base_unit_ov, _factor_ov = INV_UNIT_MAP.get(_use_unit_ov, ("g", 1))
                                 _purchase_qty_ov = _use_qty_ov * _factor_ov
                                 _size_label_ov = f"{_use_qty_ov:g}{_use_unit_ov}"
-                                conn.execute(
-                                    "UPDATE ingredients SET purchase_price=?, purchase_qty=?, base_unit=?, purchase_size_label=?, last_updated=? WHERE name=?",
-                                    (_use_price_ov, _purchase_qty_ov, _base_unit_ov, _size_label_ov, date.today().isoformat(), override)
-                                )
+                                if resolved_supplier_id:
+                                    conn.execute(
+                                        "UPDATE ingredients SET purchase_price=?, purchase_qty=?, base_unit=?, purchase_size_label=?, primary_supplier_id=?, last_updated=? WHERE name=?",
+                                        (_use_price_ov, _purchase_qty_ov, _base_unit_ov, _size_label_ov, resolved_supplier_id, date.today().isoformat(), override)
+                                    )
+                                else:
+                                    conn.execute(
+                                        "UPDATE ingredients SET purchase_price=?, purchase_qty=?, base_unit=?, purchase_size_label=?, last_updated=? WHERE name=?",
+                                        (_use_price_ov, _purchase_qty_ov, _base_unit_ov, _size_label_ov, date.today().isoformat(), override)
+                                    )
                             else:
-                                conn.execute(
-                                    "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
-                                    (_use_price_ov, date.today().isoformat(), override)
-                                )
+                                if resolved_supplier_id:
+                                    conn.execute(
+                                        "UPDATE ingredients SET purchase_price=?, primary_supplier_id=?, last_updated=? WHERE name=?",
+                                        (_use_price_ov, resolved_supplier_id, date.today().isoformat(), override)
+                                    )
+                                else:
+                                    conn.execute(
+                                        "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
+                                        (_use_price_ov, date.today().isoformat(), override)
+                                    )
                             conn.execute(
                                 "INSERT INTO invoice_log (scanned_at, supplier_name, ingredient_name, old_price, new_price, pct_change, applied_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
                                 (date.today().isoformat(), log_supplier_label, override,
@@ -4550,15 +4562,27 @@ elif page == "Invoices":
                             _base_unit_v, _factor_v = INV_UNIT_MAP.get(_use_disp_unit, ("g", 1))
                             _purchase_qty_v = _use_disp_qty * _factor_v
                             _size_label_v = f"{_use_disp_qty:g}{_use_disp_unit}"
-                            conn.execute(
-                                "UPDATE ingredients SET purchase_price=?, purchase_qty=?, base_unit=?, purchase_size_label=?, last_updated=? WHERE name=?",
-                                (_use_price, _purchase_qty_v, _base_unit_v, _size_label_v, date.today().isoformat(), row["matched_ingredient"])
-                            )
+                            if resolved_supplier_id:
+                                conn.execute(
+                                    "UPDATE ingredients SET purchase_price=?, purchase_qty=?, base_unit=?, purchase_size_label=?, primary_supplier_id=?, last_updated=? WHERE name=?",
+                                    (_use_price, _purchase_qty_v, _base_unit_v, _size_label_v, resolved_supplier_id, date.today().isoformat(), row["matched_ingredient"])
+                                )
+                            else:
+                                conn.execute(
+                                    "UPDATE ingredients SET purchase_price=?, purchase_qty=?, base_unit=?, purchase_size_label=?, last_updated=? WHERE name=?",
+                                    (_use_price, _purchase_qty_v, _base_unit_v, _size_label_v, date.today().isoformat(), row["matched_ingredient"])
+                                )
                         else:
-                            conn.execute(
-                                "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
-                                (_use_price, date.today().isoformat(), row["matched_ingredient"])
-                            )
+                            if resolved_supplier_id:
+                                conn.execute(
+                                    "UPDATE ingredients SET purchase_price=?, primary_supplier_id=?, last_updated=? WHERE name=?",
+                                    (_use_price, resolved_supplier_id, date.today().isoformat(), row["matched_ingredient"])
+                                )
+                            else:
+                                conn.execute(
+                                    "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
+                                    (_use_price, date.today().isoformat(), row["matched_ingredient"])
+                                )
                         conn.execute(
                             "INSERT INTO invoice_log (scanned_at, supplier_name, ingredient_name, old_price, new_price, pct_change, applied_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
                             (date.today().isoformat(), log_supplier_label, row["matched_ingredient"],
