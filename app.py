@@ -1127,7 +1127,12 @@ if page == "Master Stock List":
         st.session_state.stock_mode = "add"
         st.rerun()
 
-    if st.session_state.stock_mode != "list":
+    if st.session_state.stock_mode == "list":
+        if st.button("Bulk edit supplier / category", type="tertiary", key="bulk_edit_btn"):
+            st.session_state.stock_mode = "bulk"
+            st.rerun()
+
+    if st.session_state.stock_mode not in ("list",):
         if st.button("← Back to list"):
             st.session_state.stock_mode = "list"
             st.rerun()
@@ -1170,7 +1175,7 @@ if page == "Master Stock List":
                             stock_chip = tag(f"{stock_display:g} {display_unit}",
                                              "alert" if is_low else "neutral")
                         st.markdown(card_html(r["name"], [
-                            (f'{r["purchase_size_label"]} · ${r["purchase_price"]:.2f}', "meta"),
+                            (f'{r["purchase_size_label"]} · ${r["purchase_price"]:.2f}' if r["purchase_price"] is not None else r["purchase_size_label"] or "", "meta"),
                             (f'${cost:.3f} / {r["recipe_unit_qty"]:g}{r["base_unit"]}', "strong"),
                             (r["primary_supplier_name"] or "No supplier set", "faint"),
                         ], stock_chip), unsafe_allow_html=True)
@@ -1179,6 +1184,87 @@ if page == "Master Stock List":
                             st.session_state.stock_mode = "edit"
                             st.rerun()
 
+
+    # ---------------- BULK EDIT VIEW ----------------
+    elif st.session_state.stock_mode == "bulk":
+        st.subheader("Bulk edit: supplier & category")
+        conn = db.get_connection()
+        ingredients = conn.execute("""
+            SELECT i.*, s1.name AS primary_supplier_name
+            FROM ingredients i
+            LEFT JOIN suppliers s1 ON i.primary_supplier_id = s1.id
+            ORDER BY i.category, i.name
+        """).fetchall()
+        conn.close()
+
+        supplier_options = get_supplier_options()
+        CATEGORIES_LIST = ["Dairy", "Dry Goods", "Frozen", "Meat & Seafood", "Pantry", "Produce", "Other"]
+
+        # Filters
+        fc1, fc2 = st.columns(2)
+        with fc1:
+            categories = sorted(set(r["category"] or "Uncategorised" for r in ingredients))
+            filter_cat = st.selectbox("Filter by category", ["All"] + categories, key="bulk_filter_cat")
+        with fc2:
+            supplier_names = ["All"] + sorted(set(r["primary_supplier_name"] or "No supplier" for r in ingredients))
+            filter_sup = st.selectbox("Filter by supplier", supplier_names, key="bulk_filter_sup")
+
+        shown = [r for r in ingredients
+                 if (filter_cat == "All" or (r["category"] or "Uncategorised") == filter_cat)
+                 and (filter_sup == "All" or (r["primary_supplier_name"] or "No supplier") == filter_sup)]
+
+        if not shown:
+            st.info("No ingredients match this filter.")
+        else:
+            st.caption(f"{len(shown)} ingredient(s) shown. Tick the ones you want to change.")
+
+            # Select all / none
+            sa1, sa2 = st.columns(2)
+            with sa1:
+                if st.button("Select all", key="bulk_sel_all"):
+                    for r in shown:
+                        st.session_state[f"bulk_chk_{r['id']}"] = True
+            with sa2:
+                if st.button("Clear all", key="bulk_sel_none"):
+                    for r in shown:
+                        st.session_state[f"bulk_chk_{r['id']}"] = False
+
+            # Ingredient checklist
+            for r in shown:
+                sup_label = r["primary_supplier_name"] or "No supplier"
+                cat_label = r["category"] or "Uncategorised"
+                st.checkbox(
+                    f"**{r['name']}** — {cat_label} · {sup_label}",
+                    key=f"bulk_chk_{r['id']}"
+                )
+
+            selected_ids = [r["id"] for r in shown if st.session_state.get(f"bulk_chk_{r['id']}", False)]
+            st.write(f"**{len(selected_ids)} selected**")
+
+            st.divider()
+            st.write("**Apply changes to selected ingredients:**")
+            bc1, bc2 = st.columns(2)
+            with bc1:
+                new_supplier_key = st.selectbox("Change supplier to", ["— no change —"] + list(supplier_options.keys()), key="bulk_new_supplier")
+            with bc2:
+                new_category = st.selectbox("Change category to", ["— no change —"] + CATEGORIES_LIST, key="bulk_new_category")
+
+            if st.button("Apply to selected", type="primary", key="bulk_apply_btn", disabled=len(selected_ids) == 0):
+                conn = db.get_connection()
+                updated = 0
+                for ing_id in selected_ids:
+                    if new_supplier_key != "— no change —":
+                        conn.execute("UPDATE ingredients SET primary_supplier_id=? WHERE id=?",
+                                     (supplier_options[new_supplier_key], ing_id))
+                        updated += 1
+                    if new_category != "— no change —":
+                        conn.execute("UPDATE ingredients SET category=? WHERE id=?",
+                                     (new_category, ing_id))
+                        updated += 1
+                conn.commit()
+                conn.close()
+                st.success(f"Updated {len(selected_ids)} ingredient(s).")
+                st.rerun()
 
     # ---------------- ADD VIEW ----------------
     elif st.session_state.stock_mode == "add":
