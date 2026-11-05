@@ -3947,35 +3947,75 @@ elif page == "Invoices":
             st.write(f"**Invoice date (as read):** {scan['invoice_date'] or 'not detected'}")
 
         # ---- Supplier handling ----
-        # Always show all three options regardless of whether a match was found.
-        # A wrong fuzzy match was previously silently locked in with no way to change it.
-        st.write("**Supplier**")
-        if scan["supplier_matched"]:
-            st.caption(f"Auto-matched '{scan['supplier_input']}' → **{scan['supplier_matched']}**. Change it below if wrong.")
-        else:
-            st.caption(f"'{scan['supplier_input']}' — no confident match found. Choose an option below.")
+        st.markdown(section_head("Supplier", ""), unsafe_allow_html=True)
 
-        supplier_action = st.radio(
-            "What should we do with this supplier?",
-            ["Use matched supplier", "Match to a different existing supplier", "Create a new supplier"]
-            if scan["supplier_matched"] else
-            ["Match to an existing supplier", "Create a new supplier"],
-            key="inv_supplier_action", horizontal=True
-        )
+        _sup_scanned = scan["supplier_input"] or ""
+        _sup_matched = scan["supplier_matched"] or ""
 
-        if supplier_action == "Use matched supplier":
-            st.success(f"✓ Will use: **{scan['supplier_matched']}**")
+        # Build the three option cards with custom styling — no auto-selection
+        _SUP_OPT_USE    = "use_matched"
+        _SUP_OPT_PICK   = "pick_existing"
+        _SUP_OPT_CREATE = "create_new"
 
-        elif supplier_action in ("Match to an existing supplier", "Match to a different existing supplier"):
+        _sup_opts = []
+        if _sup_matched:
+            _sup_opts.append(_SUP_OPT_USE)
+        _sup_opts += [_SUP_OPT_PICK, _SUP_OPT_CREATE]
+
+        _sup_labels = {
+            _SUP_OPT_USE:    ("Use matched supplier",        f"Invoice says \"{_sup_scanned}\" — matched to {_sup_matched}"),
+            _SUP_OPT_PICK:   ("Match to existing supplier",  "Pick from your saved suppliers list"),
+            _SUP_OPT_CREATE: ("Create new supplier",         f"Add \"{_sup_scanned}\" to your suppliers"),
+        }
+
+        st.markdown("""
+        <style>
+        div[data-testid="stHorizontalBlock"].sup-opt-row > div { padding: 0 4px; }
+        </style>""", unsafe_allow_html=True)
+
+        # Render option cards as buttons — track selection in session state
+        if "inv_supplier_action" not in st.session_state:
+            st.session_state["inv_supplier_action"] = None
+
+        _cur_sup_action = st.session_state.get("inv_supplier_action")
+
+        sup_cols = st.columns(len(_sup_opts))
+        for _sci, _opt in enumerate(_sup_opts):
+            _lbl, _sub = _sup_labels[_opt]
+            _selected = (_cur_sup_action == _opt)
+            _border_color = "#c67139" if _selected else "#dcd3c4"
+            _bg = "#fbf7f1" if _selected else "#f9f4ed"
+            _check = '<span style="color:#c67139;font-weight:700">✓ </span>' if _selected else ""
+            with sup_cols[_sci]:
+                st.markdown(f"""
+                <div style="border:1.5px solid {_border_color};border-radius:10px;background:{_bg};
+                            padding:12px 14px;margin-bottom:4px;min-height:64px;cursor:pointer">
+                  <div style="font-size:0.82rem;font-weight:700;color:#201e1d;line-height:1.3">{_check}{_lbl}</div>
+                  <div style="font-size:0.73rem;color:#645c50;margin-top:2px">{_sub}</div>
+                </div>""", unsafe_allow_html=True)
+                if st.button("Select", key=f"inv_sup_btn_{_opt}", type="tertiary"):
+                    st.session_state["inv_supplier_action"] = _opt
+                    st.rerun()
+
+        supplier_action = st.session_state.get("inv_supplier_action")
+
+        if supplier_action is None:
+            st.caption("Please select how to handle this supplier before applying.")
+
+        elif supplier_action == _SUP_OPT_USE:
+            st.success(f"Will use: **{_sup_matched}**")
+
+        elif supplier_action == _SUP_OPT_PICK:
             if all_supplier_names:
-                default_idx = 0
-                if scan["supplier_matched"] and scan["supplier_matched"] in all_supplier_names:
-                    default_idx = all_supplier_names.index(scan["supplier_matched"])
-                st.selectbox("Choose supplier", all_supplier_names, index=default_idx, key="inv_supplier_match_choice")
+                default_sup_idx = None
+                if _sup_matched and _sup_matched in all_supplier_names:
+                    default_sup_idx = all_supplier_names.index(_sup_matched)
+                st.selectbox("Choose supplier", all_supplier_names, index=default_sup_idx,
+                             placeholder="Choose a supplier…", key="inv_supplier_match_choice")
             else:
-                st.info("No suppliers in the system yet — use 'Create a new supplier' instead.")
+                st.info("No suppliers saved yet — use 'Create new supplier' instead.")
 
-        elif supplier_action == "Create a new supplier":
+        elif supplier_action == "create_new":
             col1, col2 = st.columns(2)
             with col1:
                 st.text_input("Supplier name", value=scan["supplier_input"], key="inv_new_supplier_name")
@@ -4258,12 +4298,12 @@ elif page == "Invoices":
             resolved_supplier_name = scan["supplier_matched"]
             action = st.session_state.get("inv_supplier_action", "")
 
-            if action == "Use matched supplier" and scan["supplier_matched"]:
+            if action == "use_matched" and scan["supplier_matched"]:
                 # Confirmed the auto-match — use it directly
                 existing_sup = conn.execute("SELECT id FROM suppliers WHERE name = ?", (scan["supplier_matched"],)).fetchone()
                 resolved_supplier_id = existing_sup["id"] if existing_sup else None
 
-            elif action in ("Match to an existing supplier", "Match to a different existing supplier"):
+            elif action == "pick_existing":
                 match_choice = st.session_state.get("inv_supplier_match_choice")
                 if match_choice:
                     existing_sup = conn.execute("SELECT id FROM suppliers WHERE name = ?", (match_choice,)).fetchone()
@@ -4271,7 +4311,7 @@ elif page == "Invoices":
                         resolved_supplier_id = existing_sup["id"]
                         resolved_supplier_name = match_choice
 
-            elif action == "Create a new supplier":
+            elif action == "create_new":
                 new_sup_name = st.session_state.get("inv_new_supplier_name", "").strip()
                 if new_sup_name:
                     already = conn.execute("SELECT id FROM suppliers WHERE name = ?", (new_sup_name,)).fetchone()
