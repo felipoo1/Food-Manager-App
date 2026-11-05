@@ -4288,31 +4288,49 @@ elif page == "Invoices":
                 )
 
                 apply_checked = st.checkbox(
-                    f"Apply price update to **{row['matched_ingredient']}**",
+                    f"Apply update to **{row['matched_ingredient']}**",
                     value=(row["status"] == "auto"),   # alert items require explicit opt-in
                     key=f"inv_apply_{idx}"
                 )
-                # Price input always visible so it can be corrected before confirming
-                _default_price = float(round(new_p, 2))
-                pc1, pc2 = st.columns([2, 1])
-                with pc1:
+                # Full pack detail form — unit, qty, and price all editable
+                _unit_keys = list(INV_UNIT_MAP.keys())
+                _default_unit = parsed_unit if parsed_unit in _unit_keys else _unit_keys[0]
+                _default_qty = float(parsed_qty) if parsed_qty else 0.0
+                # For PKT items invoice price IS the per-pack price; for weight items use scaled new_p
+                _default_price = float(round(unit_price if _is_pkt else new_p, 2))
+
+                ef1, ef2, ef3 = st.columns([1, 1, 1])
+                with ef1:
+                    _edit_unit = st.selectbox(
+                        "Unit", _unit_keys,
+                        index=_unit_keys.index(_default_unit) if _default_unit in _unit_keys else 0,
+                        key=f"inv_edit_unit_{idx}",
+                        help="Unit used to measure this ingredient's pack"
+                    )
+                with ef2:
+                    _edit_qty = st.number_input(
+                        f"Qty per pack ({_edit_unit})",
+                        min_value=0.0, step=1.0,
+                        value=_default_qty,
+                        key=f"inv_edit_qty_{idx}",
+                        help="How many of that unit in one pack"
+                    )
+                with ef3:
                     st.number_input(
-                        f"New purchase price per {display_unit} ($)",
+                        "Pack price ($)",
                         min_value=0.0, step=0.01, format="%.2f",
                         value=_default_price,
-                        help="Edit this if the scanned price is wrong before confirming.",
+                        help="Total cost for one pack (from invoice). Edit if wrong.",
                         key=f"inv_price_override_{idx}"
                     )
-                with pc2:
-                    if old_p:
-                        _live_price = st.session_state.get(f"inv_price_override_{idx}", _default_price)
-                        _live_pct = ((_live_price - old_p) / old_p * 100) if old_p else 0
-                        _chg_color = _ACCENT_700 if abs(_live_pct) >= 10 else _N700
-                        st.markdown(
-                            f'<div style="padding-top:28px;font-size:0.8rem;color:{_chg_color};font-weight:600">'
-                            f'Was ${old_p:.2f} · {_live_pct:+.1f}%</div>',
-                            unsafe_allow_html=True
-                        )
+                if old_p:
+                    _live_price = st.session_state.get(f"inv_price_override_{idx}", _default_price)
+                    _live_pct = ((_live_price - old_p) / old_p * 100) if old_p else 0
+                    _chg_color = _ACCENT_700 if abs(_live_pct) >= 10 else _N700
+                    st.caption(
+                        f"Was ${old_p:.2f} · new pack price: "
+                        f"**:{'red' if abs(_live_pct)>=10 else 'gray'}[{_live_pct:+.1f}%]**"
+                    )
 
                 with st.expander("Wrong match? Change it"):
                     override_options = ["-- keep current match --", "+ Create new ingredient"] + all_ingredient_names
@@ -4500,24 +4518,47 @@ elif page == "Invoices":
                         if st.session_state.get(f"inv_apply_{idx}"):
                             old = conn.execute("SELECT purchase_price FROM ingredients WHERE name = ?", (override,)).fetchone()
                             old_price = old["purchase_price"] if old else None
-                            pct = ((row["new_price"] - old_price) / old_price * 100) if old_price else None
-                            conn.execute(
-                                "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
-                                (row["new_price"], date.today().isoformat(), override)
-                            )
+                            _use_price_ov = st.session_state.get(f"inv_price_override_{idx}", row["new_price"])
+                            _use_unit_ov = st.session_state.get(f"inv_edit_unit_{idx}")
+                            _use_qty_ov = st.session_state.get(f"inv_edit_qty_{idx}")
+                            pct = ((_use_price_ov - old_price) / old_price * 100) if old_price else None
+                            if _use_unit_ov and _use_qty_ov:
+                                _base_unit_ov, _factor_ov = INV_UNIT_MAP.get(_use_unit_ov, ("g", 1))
+                                _purchase_qty_ov = _use_qty_ov * _factor_ov
+                                _size_label_ov = f"{_use_qty_ov:g}{_use_unit_ov}"
+                                conn.execute(
+                                    "UPDATE ingredients SET purchase_price=?, purchase_qty=?, base_unit=?, purchase_size_label=?, last_updated=? WHERE name=?",
+                                    (_use_price_ov, _purchase_qty_ov, _base_unit_ov, _size_label_ov, date.today().isoformat(), override)
+                                )
+                            else:
+                                conn.execute(
+                                    "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
+                                    (_use_price_ov, date.today().isoformat(), override)
+                                )
                             conn.execute(
                                 "INSERT INTO invoice_log (scanned_at, supplier_name, ingredient_name, old_price, new_price, pct_change, applied_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
                                 (date.today().isoformat(), log_supplier_label, override,
-                                 old_price, row["new_price"], pct, current_user["name"])
+                                 old_price, _use_price_ov, pct, current_user["name"])
                             )
                             applied_count += 1
                     elif st.session_state.get(f"inv_apply_{idx}"):
                         _use_price = st.session_state.get(f"inv_price_override_{idx}", row["new_price"])
+                        _use_disp_unit = st.session_state.get(f"inv_edit_unit_{idx}")
+                        _use_disp_qty = st.session_state.get(f"inv_edit_qty_{idx}")
                         _pct = (((_use_price - row["old_price"]) / row["old_price"] * 100) if row["old_price"] else row["pct_change"])
-                        conn.execute(
-                            "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
-                            (_use_price, date.today().isoformat(), row["matched_ingredient"])
-                        )
+                        if _use_disp_unit and _use_disp_qty:
+                            _base_unit_v, _factor_v = INV_UNIT_MAP.get(_use_disp_unit, ("g", 1))
+                            _purchase_qty_v = _use_disp_qty * _factor_v
+                            _size_label_v = f"{_use_disp_qty:g}{_use_disp_unit}"
+                            conn.execute(
+                                "UPDATE ingredients SET purchase_price=?, purchase_qty=?, base_unit=?, purchase_size_label=?, last_updated=? WHERE name=?",
+                                (_use_price, _purchase_qty_v, _base_unit_v, _size_label_v, date.today().isoformat(), row["matched_ingredient"])
+                            )
+                        else:
+                            conn.execute(
+                                "UPDATE ingredients SET purchase_price=?, last_updated=? WHERE name=?",
+                                (_use_price, date.today().isoformat(), row["matched_ingredient"])
+                            )
                         conn.execute(
                             "INSERT INTO invoice_log (scanned_at, supplier_name, ingredient_name, old_price, new_price, pct_change, applied_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
                             (date.today().isoformat(), log_supplier_label, row["matched_ingredient"],
