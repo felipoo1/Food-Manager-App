@@ -3947,60 +3947,42 @@ elif page == "Invoices":
             st.write(f"**Invoice date (as read):** {scan['invoice_date'] or 'not detected'}")
 
         # ---- Supplier handling ----
-        st.markdown(section_head("Supplier", ""), unsafe_allow_html=True)
+        st.write("**Supplier**")
 
         _sup_scanned = scan["supplier_input"] or ""
         _sup_matched = scan["supplier_matched"] or ""
 
-        # Build the three option cards with custom styling — no auto-selection
+        # Segmented control — same pattern as Create/Match/Skip on item cards
         _SUP_OPT_USE    = "use_matched"
         _SUP_OPT_PICK   = "pick_existing"
         _SUP_OPT_CREATE = "create_new"
 
-        _sup_opts = []
         if _sup_matched:
-            _sup_opts.append(_SUP_OPT_USE)
-        _sup_opts += [_SUP_OPT_PICK, _SUP_OPT_CREATE]
+            _sup_seg_opts = ["Use matched supplier", "Match to existing supplier", "Create new supplier"]
+            _sup_seg_map  = {
+                "Use matched supplier":      _SUP_OPT_USE,
+                "Match to existing supplier": _SUP_OPT_PICK,
+                "Create new supplier":        _SUP_OPT_CREATE,
+            }
+            st.caption(f"Invoice says \"{_sup_scanned}\" — closest match: **{_sup_matched}**")
+        else:
+            _sup_seg_opts = ["Match to existing supplier", "Create new supplier"]
+            _sup_seg_map  = {
+                "Match to existing supplier": _SUP_OPT_PICK,
+                "Create new supplier":        _SUP_OPT_CREATE,
+            }
+            st.caption(f"No confident match for \"{_sup_scanned}\" — please choose an option.")
 
-        _sup_labels = {
-            _SUP_OPT_USE:    ("Use matched supplier",        f"Invoice says \"{_sup_scanned}\" — matched to {_sup_matched}"),
-            _SUP_OPT_PICK:   ("Match to existing supplier",  "Pick from your saved suppliers list"),
-            _SUP_OPT_CREATE: ("Create new supplier",         f"Add \"{_sup_scanned}\" to your suppliers"),
-        }
+        with st.container(key="inv-sup-seg"):
+            _sup_seg_val = st.segmented_control(
+                "Supplier action", _sup_seg_opts,
+                key="inv_supplier_seg", label_visibility="collapsed", default=None
+            )
 
-        st.markdown("""
-        <style>
-        div[data-testid="stHorizontalBlock"].sup-opt-row > div { padding: 0 4px; }
-        </style>""", unsafe_allow_html=True)
-
-        # Render option cards as buttons — track selection in session state
-        if "inv_supplier_action" not in st.session_state:
-            st.session_state["inv_supplier_action"] = None
-
-        _cur_sup_action = st.session_state.get("inv_supplier_action")
-
-        sup_cols = st.columns(len(_sup_opts))
-        for _sci, _opt in enumerate(_sup_opts):
-            _lbl, _sub = _sup_labels[_opt]
-            _selected = (_cur_sup_action == _opt)
-            _border_color = "#c67139" if _selected else "#dcd3c4"
-            _bg = "#fbf7f1" if _selected else "#f9f4ed"
-            _check = '<span style="color:#c67139;font-weight:700">✓ </span>' if _selected else ""
-            with sup_cols[_sci]:
-                st.markdown(f"""
-                <div style="border:1.5px solid {_border_color};border-radius:10px;background:{_bg};
-                            padding:12px 14px;margin-bottom:4px;min-height:64px;cursor:pointer">
-                  <div style="font-size:0.82rem;font-weight:700;color:#201e1d;line-height:1.3">{_check}{_lbl}</div>
-                  <div style="font-size:0.73rem;color:#645c50;margin-top:2px">{_sub}</div>
-                </div>""", unsafe_allow_html=True)
-                if st.button("Select", key=f"inv_sup_btn_{_opt}", type="tertiary"):
-                    st.session_state["inv_supplier_action"] = _opt
-                    st.rerun()
-
-        supplier_action = st.session_state.get("inv_supplier_action")
+        supplier_action = _sup_seg_map.get(_sup_seg_val) if _sup_seg_val else None
 
         if supplier_action is None:
-            st.caption("Please select how to handle this supplier before applying.")
+            pass  # no hint needed — segmented control is self-explanatory
 
         elif supplier_action == _SUP_OPT_USE:
             st.success(f"Will use: **{_sup_matched}**")
@@ -4296,7 +4278,13 @@ elif page == "Invoices":
             # Step 1: resolve the supplier
             resolved_supplier_id = None
             resolved_supplier_name = scan["supplier_matched"]
-            action = st.session_state.get("inv_supplier_action", "")
+            _seg_val = st.session_state.get("inv_supplier_seg")
+            _seg_map_apply = {
+                "Use matched supplier":       "use_matched",
+                "Match to existing supplier": "pick_existing",
+                "Create new supplier":        "create_new",
+            }
+            action = _seg_map_apply.get(_seg_val, "")
 
             if action == "use_matched" and scan["supplier_matched"]:
                 # Confirmed the auto-match — use it directly
