@@ -3873,21 +3873,28 @@ elif page == "Invoices":
                             if match_name:
                                 ing = ingredient_by_name[match_name]
                                 old_price = ing["purchase_price"] or 0
-                                # Scale the invoice unit price to match the ingredient's stored pack price.
-                                # e.g. ingredient has purchase_qty=500g, invoice says $20/Kg (per 1000g):
-                                # new_pack_price = $20/1000 * 500 = $10 for their 500g pack.
-                                # This preserves the correct cost-per-gram regardless of pack size.
-                                INV_UM = {"g": 1, "Kg": 1000, "ml": 1, "L": 1000, "Each": 1}
+                                # Determine new_price: either the invoice price IS the pack price (PKT/PACK/EA),
+                                # or it's a per-weight/volume price that needs scaling to the ingredient's pack size.
                                 import re as _re
                                 _pack_text = pack_size_text.strip().upper() if pack_size_text else ""
-                                _unit_match = _re.search(r"(KG|G|L|ML|LITRE|LITER|PKT|PACK|EA|EACH|UNIT)", _pack_text)
-                                _display_unit_raw = _unit_match.group(1) if _unit_match else "G"
-                                _unit_label_map = {"KG": "Kg", "G": "g", "L": "L", "LITRE": "L", "LITER": "L", "ML": "ml",
-                                                   "PKT": "Each", "PACK": "Each", "EA": "Each", "EACH": "Each", "UNIT": "Each"}
-                                _display_unit = _unit_label_map.get(_display_unit_raw, "Kg")
-                                _factor = INV_UM.get(_display_unit, 1000)
-                                _ing_qty = ing["purchase_qty"] or 1
-                                new_price = unit_price / _factor * _ing_qty
+                                # Check for pack/unit pricing FIRST (before weight units like G or KG)
+                                # e.g. "500G X 24 PKT" — the unit is PKT, not G
+                                _per_pack = bool(_re.search(r"\b(PKT|PACK|EA|EACH|UNIT)\b", _pack_text))
+                                if _per_pack:
+                                    # Invoice price is already the per-pack price — use directly
+                                    new_price = unit_price
+                                else:
+                                    # Invoice price is per-weight/volume (e.g. $/Kg, $/L) — scale to pack size
+                                    # e.g. ingredient is 500g pack, invoice says $20/Kg:
+                                    # new_pack_price = $20/1000 * 500 = $10
+                                    _unit_match = _re.search(r"\b(KG|G|L|ML|LITRE|LITER)\b", _pack_text)
+                                    _display_unit_raw = _unit_match.group(1) if _unit_match else "KG"
+                                    _unit_label_map = {"KG": "Kg", "G": "g", "L": "L", "LITRE": "L", "LITER": "L", "ML": "ml"}
+                                    _display_unit = _unit_label_map.get(_display_unit_raw, "Kg")
+                                    INV_UM = {"g": 1, "Kg": 1000, "ml": 1, "L": 1000}
+                                    _factor = INV_UM.get(_display_unit, 1000)
+                                    _ing_qty = ing["purchase_qty"] or 1
+                                    new_price = unit_price / _factor * _ing_qty
                                 pct_change = ((new_price - old_price) / old_price * 100) if old_price else None
                                 status = "unmatched"
                                 if pct_change is not None:
@@ -3958,18 +3965,18 @@ elif page == "Invoices":
         _SUP_OPT_CREATE = "create_new"
 
         if _sup_matched:
-            _sup_seg_opts = ["Use matched supplier", "Match to existing supplier", "Create new supplier"]
+            _sup_seg_opts = ["Use matched", "Pick existing", "Create new"]
             _sup_seg_map  = {
-                "Use matched supplier":      _SUP_OPT_USE,
-                "Match to existing supplier": _SUP_OPT_PICK,
-                "Create new supplier":        _SUP_OPT_CREATE,
+                "Use matched":  _SUP_OPT_USE,
+                "Pick existing": _SUP_OPT_PICK,
+                "Create new":   _SUP_OPT_CREATE,
             }
             st.caption(f"Invoice says \"{_sup_scanned}\" — closest match: **{_sup_matched}**")
         else:
-            _sup_seg_opts = ["Match to existing supplier", "Create new supplier"]
+            _sup_seg_opts = ["Pick existing", "Create new"]
             _sup_seg_map  = {
-                "Match to existing supplier": _SUP_OPT_PICK,
-                "Create new supplier":        _SUP_OPT_CREATE,
+                "Pick existing": _SUP_OPT_PICK,
+                "Create new":   _SUP_OPT_CREATE,
             }
             st.caption(f"No confident match for \"{_sup_scanned}\" — please choose an option.")
 
@@ -4213,61 +4220,107 @@ elif page == "Invoices":
 
         if matched_idx:
             st.markdown(section_head("Already in Master Stock", f"{len(matched_idx)} lines"), unsafe_allow_html=True)
+
+        # ── Color tokens for inline HTML ──────────────────────────────────────
+        _N100 = "#f9f4ed"; _N200 = "#eee7db"; _N300 = "#dcd3c4"
+        _CARD = "#e7ddcb"; _CARD_INNER = "#fbf7f1"
+        _INK = "#201e1d"; _N700 = "#645c50"; _N800 = "#474238"
+        _ACCENT = "#c67139"; _ACCENT_100 = "#fff2eb"; _ACCENT_700 = "#8c491a"
+        _OK_BG = "#e9ede1"; _OK_FG = "#4b5636"
+
         for idx in matched_idx:
             row = scan["rows"][idx]
-            st.markdown("---")
-            cols = st.columns([3, 2, 2])
-            cols[0].write(f"**{row['description']}**  \n{row['pack_size']}")
             parsed_qty, parsed_unit = parse_pack_size(row["pack_size"], row["description"])
             unit_price = row.get("unit_price", row["new_price"])
-            cols[1].write(f"**${unit_price:.2f} per {parsed_unit}**")
-            badge = "🟡 Needs review" if row["status"] == "alert" else "🟢 Small change — pre-approved"
-            cols[2].write(
-                f"{badge}  \nMatched: **{row['matched_ingredient']}**  \n"
-                f"${row['old_price']:.2f} → ${row['new_price']:.2f} ({row['pct_change']:+.1f}%)"
-            )
-            apply_checked = st.checkbox(
-                f"Apply this price update to {row['matched_ingredient']}",
-                value=(row["status"] == "auto"),
-                key=f"inv_apply_{idx}"
-            )
-            if apply_checked:
-                st.number_input(
-                    "Correct price if wrong ($)", min_value=0.0, step=0.01, format="%.2f",
-                    value=float(round(row["new_price"], 2)),
-                    help="Change this if the scanned price is incorrect.",
-                    key=f"inv_price_override_{idx}"
+            is_alert = row["status"] == "alert"
+
+            # Status badge colours
+            badge_bg = _ACCENT_100 if is_alert else _OK_BG
+            badge_fg = _ACCENT_700 if is_alert else _OK_FG
+            badge_txt = "⚠ Needs review" if is_alert else "✓ Auto-approved"
+
+            # Price change display
+            pct = row.get("pct_change")
+            old_p = row.get("old_price") or 0
+            new_p = row["new_price"]
+            if pct is not None:
+                pct_color = _ACCENT_700 if abs(pct) >= 10 else _N700
+                price_arrow = "↑" if new_p > old_p else "↓"
+                price_line = (
+                    f'<span style="color:{_N800}">Was <s>${old_p:.2f}</s></span>'
+                    f' &nbsp;{price_arrow}&nbsp; '
+                    f'<span style="font-weight:700;color:{pct_color}">'
+                    f'${new_p:.2f} ({pct:+.1f}%)</span>'
                 )
-            # Always show a "change match" override dropdown so wrong fuzzy matches can be corrected
-            with st.expander("Wrong match? Change it"):
-                override_options = ["-- keep current match --", "+ Create new ingredient"] + all_ingredient_names
-                override_val = st.selectbox(
-                    "Match to a different ingredient instead",
-                    override_options,
-                    key=f"inv_override_{idx}"
+            else:
+                price_line = f'<span style="color:{_N700}">New — no prior price</span>'
+
+            with st.container(key=f"matchcard_{idx}"):
+                # Card header HTML
+                st.markdown(
+                    f'<div style="display:flex;align-items:flex-start;gap:8px;'
+                    f'padding:12px 14px 6px;background:{_CARD};'
+                    f'border-radius:10px 10px 0 0;margin-bottom:0">'
+                    f'<div style="flex:1;min-width:0">'
+                    f'<div style="font-family:Nunito,sans-serif;font-weight:800;font-size:1rem;'
+                    f'color:{_INK};line-height:1.25">{row["matched_ingredient"]}</div>'
+                    f'<div style="font-size:0.76rem;color:{_N700};margin-top:2px">'
+                    f'{row["description"]}'
+                    f'{(" · " + row["pack_size"]) if row["pack_size"] else ""}</div>'
+                    f'</div>'
+                    f'<span style="display:inline-flex;align-items:center;white-space:nowrap;'
+                    f'font-size:0.72rem;font-weight:600;padding:3px 10px;border-radius:999px;'
+                    f'background:{badge_bg};color:{badge_fg}">{badge_txt}</span>'
+                    f'</div>'
+                    f'<div style="background:{_CARD_INNER};padding:8px 14px 10px;'
+                    f'border-radius:0 0 10px 10px;margin-bottom:4px">'
+                    f'<div style="font-size:0.82rem;color:{_N700};margin-bottom:6px">'
+                    f'<span style="font-weight:600;color:{_N800}">${unit_price:.2f}</span>'
+                    f' per {parsed_unit} &nbsp;·&nbsp; {price_line}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True
                 )
-                if override_val == "+ Create new ingredient":
-                    # parsed_qty and parsed_unit already computed above for the price display
-                    unit_keys = list(INV_UNIT_MAP.keys())
-                    default_unit_idx = unit_keys.index(parsed_unit) if parsed_unit in unit_keys else 0
-                    st.write("**New ingredient details:**")
-                    nc1, nc2, nc3 = st.columns(3)
-                    with nc1:
-                        st.text_input("Ingredient name", value=row["description"], key=f"inv_ovr_new_name_{idx}")
-                        st.multiselect("Category", INV_CATEGORIES, default=[], key=f"inv_ovr_new_category_{idx}")
-                    with nc2:
-                        ovr_unit = st.selectbox("Unit", unit_keys, index=default_unit_idx, key=f"inv_ovr_new_display_unit_{idx}")
-                        st.number_input(f"Purchase quantity ({ovr_unit})", min_value=0.0, step=1.0, value=parsed_qty, key=f"inv_ovr_new_display_qty_{idx}")
-                        _ovr_pack_price = round(unit_price, 2)
-                        st.number_input(
-                            "Purchase price ($)", min_value=0.0, step=0.01, format="%.2f",
-                            value=float(_ovr_pack_price),
-                            help="Total cost for one pack (from invoice). Edit if wrong.",
-                            key=f"inv_ovr_new_price_{idx}"
-                        )
-                    with nc3:
-                        st.number_input("Recipe portion size", min_value=0.0, step=1.0, value=1.0, key=f"inv_ovr_new_recipe_unit_{idx}")
-                        st.text_input("Packaging word (optional)", placeholder="bag, tin, drum...", key=f"inv_ovr_new_container_{idx}")
+
+                apply_checked = st.checkbox(
+                    f"Apply price update to **{row['matched_ingredient']}**",
+                    value=(row["status"] in ("auto", "alert")),
+                    key=f"inv_apply_{idx}"
+                )
+                if apply_checked:
+                    st.number_input(
+                        "Correct price if wrong ($)", min_value=0.0, step=0.01, format="%.2f",
+                        value=float(round(new_p, 2)),
+                        help="Edit if the scanned price is incorrect.",
+                        key=f"inv_price_override_{idx}"
+                    )
+
+                with st.expander("Wrong match? Change it"):
+                    override_options = ["-- keep current match --", "+ Create new ingredient"] + all_ingredient_names
+                    override_val = st.selectbox(
+                        "Match to a different ingredient instead",
+                        override_options,
+                        key=f"inv_override_{idx}"
+                    )
+                    if override_val == "+ Create new ingredient":
+                        unit_keys = list(INV_UNIT_MAP.keys())
+                        default_unit_idx = unit_keys.index(parsed_unit) if parsed_unit in unit_keys else 0
+                        st.write("**New ingredient details:**")
+                        nc1, nc2, nc3 = st.columns(3)
+                        with nc1:
+                            st.text_input("Ingredient name", value=row["description"], key=f"inv_ovr_new_name_{idx}")
+                            st.multiselect("Category", INV_CATEGORIES, default=[], key=f"inv_ovr_new_category_{idx}")
+                        with nc2:
+                            ovr_unit = st.selectbox("Unit", unit_keys, index=default_unit_idx, key=f"inv_ovr_new_display_unit_{idx}")
+                            st.number_input(f"Purchase quantity ({ovr_unit})", min_value=0.0, step=1.0, value=parsed_qty, key=f"inv_ovr_new_display_qty_{idx}")
+                            st.number_input(
+                                "Purchase price ($)", min_value=0.0, step=0.01, format="%.2f",
+                                value=float(round(unit_price, 2)),
+                                help="Total cost for one pack (from invoice). Edit if wrong.",
+                                key=f"inv_ovr_new_price_{idx}"
+                            )
+                        with nc3:
+                            st.number_input("Recipe portion size", min_value=0.0, step=1.0, value=1.0, key=f"inv_ovr_new_recipe_unit_{idx}")
+                            st.text_input("Packaging word (optional)", placeholder="bag, tin, drum...", key=f"inv_ovr_new_container_{idx}")
 
         st.markdown("---")
         if unsorted_count:
@@ -4280,9 +4333,9 @@ elif page == "Invoices":
             resolved_supplier_name = scan["supplier_matched"]
             _seg_val = st.session_state.get("inv_supplier_seg")
             _seg_map_apply = {
-                "Use matched supplier":       "use_matched",
-                "Match to existing supplier": "pick_existing",
-                "Create new supplier":        "create_new",
+                "Use matched":  "use_matched",
+                "Pick existing": "pick_existing",
+                "Create new":   "create_new",
             }
             action = _seg_map_apply.get(_seg_val, "")
 
