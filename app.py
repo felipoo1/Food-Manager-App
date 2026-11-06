@@ -2510,6 +2510,117 @@ elif page == "Recipes":
                     conn.close()
                     st.rerun()
 
+            # ── Bottom-section styling ─────────────────────────
+            st.markdown("""
+<style>
+/* ---- shared field styles for Edit details / Tags / Conversions ---- */
+/* scope to the edit-recipe main block via the form keys */
+[data-testid="stForm"][id*="edit_recipe_details_"],
+[data-testid="stForm"][id*="add_conversion_"] {
+    background: #fbf7f1 !important;
+    border: 1.5px solid #e7ddcb !important;
+    border-radius: 12px !important;
+    padding: 16px 20px !important;
+}
+/* text + number inputs inside those forms and the loose tag/conversion fields */
+[data-testid="stForm"][id*="edit_recipe_details_"] input[type="text"],
+[data-testid="stForm"][id*="edit_recipe_details_"] input[type="number"],
+[data-testid="stForm"][id*="add_conversion_"] input[type="text"],
+[data-testid="stForm"][id*="add_conversion_"] input[type="number"] {
+    background: #fff !important;
+    border: 1.5px solid #e7ddcb !important;
+    border-radius: 10px !important;
+    font-family: Nunito, sans-serif !important;
+    font-size: 0.9rem !important;
+    color: #201e1d !important;
+}
+[data-testid="stForm"][id*="edit_recipe_details_"] input:focus,
+[data-testid="stForm"][id*="add_conversion_"] input:focus {
+    border-color: #c67139 !important;
+    box-shadow: 0 0 0 2px #fff2eb !important;
+    outline: none !important;
+}
+/* selectboxes inside those forms */
+[data-testid="stForm"][id*="edit_recipe_details_"] div[data-baseweb="select"] > div,
+[data-testid="stForm"][id*="add_conversion_"] div[data-baseweb="select"] > div {
+    background: #fff !important;
+    border: 1.5px solid #e7ddcb !important;
+    border-radius: 10px !important;
+    font-family: Nunito, sans-serif !important;
+    font-size: 0.9rem !important;
+}
+[data-testid="stForm"][id*="edit_recipe_details_"] div[data-baseweb="select"] > div:focus-within,
+[data-testid="stForm"][id*="add_conversion_"] div[data-baseweb="select"] > div:focus-within {
+    border-color: #c67139 !important;
+    box-shadow: 0 0 0 2px #fff2eb !important;
+}
+/* labels inside those forms */
+[data-testid="stForm"][id*="edit_recipe_details_"] label[data-testid="stWidgetLabel"] p,
+[data-testid="stForm"][id*="add_conversion_"] label[data-testid="stWidgetLabel"] p {
+    font-family: Nunito, sans-serif !important;
+    font-size: 0.78rem !important;
+    font-weight: 700 !important;
+    color: #645c50 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.04em !important;
+}
+/* form submit buttons */
+[data-testid="stForm"][id*="edit_recipe_details_"] div[data-testid="stFormSubmitButton"] button,
+[data-testid="stForm"][id*="add_conversion_"] div[data-testid="stFormSubmitButton"] button {
+    background: #fff !important;
+    color: #645c50 !important;
+    border: 1.5px solid #e7ddcb !important;
+    border-radius: 10px !important;
+    font-family: Nunito, sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 0.88rem !important;
+}
+[data-testid="stForm"][id*="edit_recipe_details_"] div[data-testid="stFormSubmitButton"] button:hover,
+[data-testid="stForm"][id*="add_conversion_"] div[data-testid="stFormSubmitButton"] button:hover {
+    border-color: #c67139 !important;
+    color: #c67139 !important;
+    background: #fff2eb !important;
+}
+/* number stepper +/- buttons */
+[data-testid="stForm"][id*="edit_recipe_details_"] button[data-testid="stNumberInputStepDown"],
+[data-testid="stForm"][id*="edit_recipe_details_"] button[data-testid="stNumberInputStepUp"],
+[data-testid="stForm"][id*="add_conversion_"] button[data-testid="stNumberInputStepDown"],
+[data-testid="stForm"][id*="add_conversion_"] button[data-testid="stNumberInputStepUp"] {
+    background: #f5ede0 !important;
+    border: none !important;
+    color: #8c491a !important;
+    border-radius: 8px !important;
+}
+/* Tags row — multiselect + text input */
+.st-key-tag-row span[data-baseweb="tag"] {
+    background: #fff2eb !important;
+    border-radius: 20px !important;
+    color: #8c491a !important;
+    font-family: Nunito, sans-serif !important;
+    font-size: 0.8rem !important;
+    font-weight: 700 !important;
+}
+.st-key-tag-row div[data-baseweb="select"] > div {
+    background: #fff !important;
+    border: 1.5px solid #e7ddcb !important;
+    border-radius: 10px !important;
+    font-family: Nunito, sans-serif !important;
+}
+.st-key-tag-row input[type="text"] {
+    background: #fff !important;
+    border: 1.5px solid #e7ddcb !important;
+    border-radius: 10px !important;
+    font-family: Nunito, sans-serif !important;
+    font-size: 0.9rem !important;
+    color: #201e1d !important;
+}
+.st-key-tag-row input[type="text"]:focus {
+    border-color: #c67139 !important;
+    box-shadow: 0 0 0 2px #fff2eb !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
             # ── Recipe details ─────────────────────────────────
             st.markdown(section_head("Edit recipe details", ""), unsafe_allow_html=True)
             with st.form(f"edit_recipe_details_{selected_recipe_id}"):
@@ -2551,11 +2662,12 @@ elif page == "Recipes":
             all_known_tags = sorted(set(t.strip() for row in all_tag_rows for t in row["tags"].split(",") if t.strip()))
             current_tags = [t.strip() for t in (recipe["tags"] or "").split(",") if t.strip()]
             st.markdown(section_head("Tags", ", ".join(current_tags) if current_tags else "none"), unsafe_allow_html=True)
-            tag_col1, tag_col2 = st.columns([3, 2])
-            with tag_col1:
-                chosen_tags = st.multiselect("Tags", options=sorted(set(all_known_tags) | set(current_tags)), default=current_tags, key=f"tags_select_{selected_recipe_id}", label_visibility="collapsed")
-            with tag_col2:
-                new_tag = st.text_input("New tag", placeholder="Add a tag…", key=f"new_tag_{selected_recipe_id}", label_visibility="collapsed")
+            with st.container(key="tag-row"):
+                tag_col1, tag_col2 = st.columns([3, 2])
+                with tag_col1:
+                    chosen_tags = st.multiselect("Tags", options=sorted(set(all_known_tags) | set(current_tags)), default=current_tags, key=f"tags_select_{selected_recipe_id}", label_visibility="collapsed")
+                with tag_col2:
+                    new_tag = st.text_input("New tag", placeholder="Add a tag…", key=f"new_tag_{selected_recipe_id}", label_visibility="collapsed")
             if st.button("Save tags", key=f"save_tags_{selected_recipe_id}"):
                 final_tags = list(chosen_tags)
                 if new_tag.strip() and new_tag.strip() not in final_tags:
