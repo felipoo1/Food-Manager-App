@@ -2346,85 +2346,150 @@ elif page == "Recipes":
 
             has_prep_type = recipe["type"] in ("Dish", "Beverage")
 
+            # CSS for the add-ingredient row
+            st.markdown("""
+<style>
+/* add-ingredient row: round fields, correct font */
+.st-key-add-ing-row div[data-baseweb="select"] > div {
+    background: #fff !important;
+    border: 1.5px solid #e7ddcb !important;
+    border-radius: 10px !important;
+    font-family: Nunito, sans-serif !important;
+    font-size: 0.9rem !important;
+    min-height: 40px !important;
+}
+.st-key-add-ing-row div[data-baseweb="select"] > div:focus-within {
+    border-color: #c67139 !important;
+    box-shadow: 0 0 0 2px #fff2eb !important;
+}
+.st-key-add-ing-row input[type="number"] {
+    background: #fff !important;
+    border: 1.5px solid #e7ddcb !important;
+    border-radius: 10px !important;
+    font-family: Nunito, sans-serif !important;
+    font-size: 0.9rem !important;
+}
+.st-key-add-ing-row input[type="number"]:focus {
+    border-color: #c67139 !important;
+    box-shadow: 0 0 0 2px #fff2eb !important;
+}
+.st-key-add-ing-row button[kind="primary"] {
+    border-radius: 10px !important;
+    font-family: Nunito, sans-serif !important;
+    font-weight: 700 !important;
+}
+/* component toggle pills */
+.st-key-add-ing-row div[data-testid="stRadio"] label {
+    font-family: Nunito, sans-serif !important;
+    font-size: 0.82rem !important;
+    font-weight: 600 !important;
+    color: #645c50 !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
             if has_prep_type:
                 component_type = st.radio(
-                    "Component type", ["Raw ingredient", "Prep recipe"],
+                    "Add:", ["Raw ingredient", "Prep recipe"],
                     horizontal=True, key=f"comp_type_{selected_recipe_id}",
-                    label_visibility="collapsed"
                 )
             else:
                 component_type = "Raw ingredient"
 
-            if component_type == "Raw ingredient":
-                ing_rows = db.get_cached_ingredients_basic()
-                ing_labels = {f"{r['name']} ({r['base_unit']})": (r["id"], r["base_unit"]) for r in ing_rows}
-                if ing_labels:
-                    ai_c1, ai_c2, ai_c3, ai_c4 = st.columns([4, 2, 2, 1])
-                    with ai_c1:
-                        chosen_label = st.selectbox("Ingredient", list(ing_labels.keys()),
-                            key=f"add_line_ingredient_{selected_recipe_id}", label_visibility="collapsed")
-                    chosen_id, chosen_unit = ing_labels[chosen_label]
-                    with ai_c2:
-                        qty = st.number_input(f"{chosen_unit}", min_value=0.0, step=1.0,
-                            key=f"add_line_qty_ingredient_{selected_recipe_id}", label_visibility="collapsed")
-                    _preview_conn = db.get_connection()
-                    _preview_cost = db.compute_line_cost(
-                        {"ingredient_id": chosen_id, "sub_recipe_id": None, "quantity": qty}, _preview_conn
-                    ) or 0
-                    _preview_conn.close()
-                    with ai_c3:
-                        st.markdown(
-                            f'<div style="padding:9px 0 0;font-size:0.82rem;font-weight:700;color:#8c491a">'
-                            f'${_preview_cost:.2f}</div>',
-                            unsafe_allow_html=True,
-                        )
-                    with ai_c4:
-                        add_clicked = st.button("＋ Add", type="primary",
-                            key=f"add_line_submit_{selected_recipe_id}", use_container_width=True)
+            with st.container(key="add-ing-row"):
+                if component_type == "Raw ingredient":
+                    ing_rows = db.get_cached_ingredients_basic()
+                    ing_labels = {f"{r['name']} ({r['base_unit']})": (r["id"], r["base_unit"]) for r in ing_rows}
+                    if ing_labels:
+                        ai_c1, ai_c2, ai_c3, ai_c4 = st.columns([4, 2, 2, 1])
+                        with ai_c1:
+                            chosen_label = st.selectbox(
+                                "Ingredient", list(ing_labels.keys()),
+                                index=None, placeholder="Search ingredients…",
+                                key=f"add_line_ingredient_{selected_recipe_id}",
+                                label_visibility="collapsed",
+                            )
+                        chosen_id = ing_labels[chosen_label][0] if chosen_label else None
+                        chosen_unit = ing_labels[chosen_label][1] if chosen_label else ""
+                        with ai_c2:
+                            qty = st.number_input(
+                                f"Qty ({chosen_unit})" if chosen_unit else "Qty",
+                                min_value=0.0, step=1.0,
+                                key=f"add_line_qty_ingredient_{selected_recipe_id}",
+                                label_visibility="collapsed",
+                            )
+                        if chosen_id:
+                            _preview_conn = db.get_connection()
+                            _preview_cost = db.compute_line_cost(
+                                {"ingredient_id": chosen_id, "sub_recipe_id": None, "quantity": qty}, _preview_conn
+                            ) or 0
+                            _preview_conn.close()
+                        else:
+                            _preview_cost = 0
+                        with ai_c3:
+                            st.markdown(
+                                f'<div style="padding:9px 0 0;font-size:0.82rem;font-weight:700;color:#8c491a">'
+                                f'${_preview_cost:.2f}</div>',
+                                unsafe_allow_html=True,
+                            )
+                        with ai_c4:
+                            add_clicked = st.button("＋ Add", type="primary",
+                                key=f"add_line_submit_{selected_recipe_id}", use_container_width=True)
+                    else:
+                        st.caption("No ingredients in your Master Stock List yet.")
+                        chosen_id, qty, add_clicked = None, 0, False
                 else:
-                    st.caption("No ingredients in your Master Stock List yet.")
-                    chosen_id, qty, add_clicked = None, 0, False
-            else:
-                prep_options = recipe_options(type_filter="Prep", exclude_id=selected_recipe_id)
-                if prep_options:
-                    ai_c1, ai_c2, ai_c3, ai_c4, ai_c5 = st.columns([3, 1, 2, 2, 1])
-                    with ai_c1:
-                        chosen_label = st.selectbox("Prep recipe", list(prep_options.keys()),
-                            key=f"add_line_prep_{selected_recipe_id}", label_visibility="collapsed")
-                    chosen_id = prep_options[chosen_label]
-                    conn = db.get_connection()
-                    prep_unit = conn.execute("SELECT yield_unit FROM recipes WHERE id = ?", (chosen_id,)).fetchone()["yield_unit"]
-                    prep_conversions = conn.execute(
-                        "SELECT DISTINCT from_unit FROM recipe_conversions WHERE recipe_id = ?", (chosen_id,)
-                    ).fetchall()
-                    conn.close()
-                    unit_options = [prep_unit] + [c["from_unit"] for c in prep_conversions]
-                    with ai_c2:
-                        entry_unit = st.selectbox("Unit", unit_options,
-                            key=f"add_line_prep_unit_{selected_recipe_id}", label_visibility="collapsed")
-                    with ai_c3:
-                        qty_entered = st.number_input(f"{entry_unit}", min_value=0.0, step=1.0,
-                            key=f"add_line_qty_prep_{selected_recipe_id}", label_visibility="collapsed")
-                    qty = db.convert_to_base_unit(chosen_id, qty_entered, entry_unit, prep_unit)
-                    _preview_conn = db.get_connection()
-                    _preview_cost = db.compute_line_cost(
-                        {"ingredient_id": None, "sub_recipe_id": chosen_id, "quantity": qty}, _preview_conn
-                    ) or 0
-                    _preview_conn.close()
-                    with ai_c4:
-                        st.markdown(
-                            f'<div style="padding:9px 0 0;font-size:0.82rem;font-weight:700;color:#8c491a">'
-                            f'${_preview_cost:.2f}</div>',
-                            unsafe_allow_html=True,
-                        )
-                        if entry_unit != prep_unit and qty_entered > 0:
-                            st.caption(f"= {qty:g} {prep_unit}")
-                    with ai_c5:
-                        add_clicked = st.button("＋ Add", type="primary",
-                            key=f"add_line_submit_{selected_recipe_id}", use_container_width=True)
-                else:
-                    st.caption("No Prep recipes available yet.")
-                    chosen_id, qty, add_clicked = None, 0, False
+                    prep_options = recipe_options(type_filter="Prep", exclude_id=selected_recipe_id)
+                    if prep_options:
+                        ai_c1, ai_c2, ai_c3, ai_c4, ai_c5 = st.columns([3, 1, 2, 2, 1])
+                        with ai_c1:
+                            chosen_label = st.selectbox(
+                                "Prep recipe", list(prep_options.keys()),
+                                index=None, placeholder="Search prep recipes…",
+                                key=f"add_line_prep_{selected_recipe_id}",
+                                label_visibility="collapsed",
+                            )
+                        chosen_id = prep_options[chosen_label] if chosen_label else None
+                        if chosen_id:
+                            conn = db.get_connection()
+                            prep_unit = conn.execute("SELECT yield_unit FROM recipes WHERE id = ?", (chosen_id,)).fetchone()["yield_unit"]
+                            prep_conversions = conn.execute(
+                                "SELECT DISTINCT from_unit FROM recipe_conversions WHERE recipe_id = ?", (chosen_id,)
+                            ).fetchall()
+                            conn.close()
+                            unit_options = [prep_unit] + [c["from_unit"] for c in prep_conversions]
+                        else:
+                            prep_unit = "g"
+                            unit_options = ["g"]
+                        with ai_c2:
+                            entry_unit = st.selectbox("Unit", unit_options,
+                                key=f"add_line_prep_unit_{selected_recipe_id}", label_visibility="collapsed")
+                        with ai_c3:
+                            qty_entered = st.number_input(f"{entry_unit}", min_value=0.0, step=1.0,
+                                key=f"add_line_qty_prep_{selected_recipe_id}", label_visibility="collapsed")
+                        qty = db.convert_to_base_unit(chosen_id, qty_entered, entry_unit, prep_unit) if chosen_id else 0
+                        if chosen_id:
+                            _preview_conn = db.get_connection()
+                            _preview_cost = db.compute_line_cost(
+                                {"ingredient_id": None, "sub_recipe_id": chosen_id, "quantity": qty}, _preview_conn
+                            ) or 0
+                            _preview_conn.close()
+                        else:
+                            _preview_cost = 0
+                        with ai_c4:
+                            st.markdown(
+                                f'<div style="padding:9px 0 0;font-size:0.82rem;font-weight:700;color:#8c491a">'
+                                f'${_preview_cost:.2f}</div>',
+                                unsafe_allow_html=True,
+                            )
+                            if chosen_id and entry_unit != prep_unit and qty_entered > 0:
+                                st.caption(f"= {qty:g} {prep_unit}")
+                        with ai_c5:
+                            add_clicked = st.button("＋ Add", type="primary",
+                                key=f"add_line_submit_{selected_recipe_id}", use_container_width=True)
+                    else:
+                        st.caption("No Prep recipes available yet.")
+                        chosen_id, qty, add_clicked = None, 0, False
 
             if add_clicked:
                 if not chosen_id or qty <= 0:
