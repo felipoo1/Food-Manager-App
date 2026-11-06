@@ -1868,23 +1868,40 @@ elif page == "Recipes":
                 else f"No **{rtype}** categories yet. Click **\"New category\"** above to create one."
             )
         else:
-            with st.container(key="grid4-recipecats"):
+            st.markdown("""
+<style>
+.st-key-recipecats-list div[data-testid="stButton"] button {
+    background: #fbf7f1 !important;
+    border: 2px solid #e7ddcb !important;
+    border-radius: 12px !important;
+    padding: 18px 22px !important;
+    text-align: left !important;
+    height: auto !important;
+    min-height: 68px !important;
+    width: 100% !important;
+    color: #201e1d !important;
+    font-family: Nunito, sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 1.05rem !important;
+    box-shadow: none !important;
+    line-height: 1.4 !important;
+}
+.st-key-recipecats-list div[data-testid="stButton"] button:hover {
+    border-color: #c67139 !important;
+    background: #e7ddcb !important;
+}
+</style>
+""", unsafe_allow_html=True)
+            with st.container(key="recipecats-list"):
                 for cat in categories:
-                    with st.container(key=f"card-rcat-{cat['id']}"):
-                        render_category_image_or_placeholder(cat["image_url"], rtype, height_px=120)
-                        if st.button(cat["name"], type="tertiary", key=f"cardtitle-{cat['id']}"):
-                            st.session_state.recipe_active_category_id = cat["id"]
-                            st.session_state.recipe_active_type = rtype
-                            st.session_state.recipe_mode = "category_detail"
-                            st.rerun()
-                        n = counts[cat["id"]]
-                        badge_color = _ACCENT if n > 0 else _N700
-                        st.markdown(
-                            f"<span style='background:{badge_color}22; color:{badge_color}; "
-                            f"border-radius:12px; padding:3px 12px; font-size:0.82rem; font-weight:600;'>"
-                            f"{n} recipe{'s' if n != 1 else ''}</span>",
-                            unsafe_allow_html=True
-                        )
+                    n = counts[cat["id"]]
+                    count_str = f"{n} recipe{'s' if n != 1 else ''}"
+                    btn_label = f"{cat['name']}  ·  {count_str}"
+                    if st.button(btn_label, key=f"cardtitle-{cat['id']}", use_container_width=True):
+                        st.session_state.recipe_active_category_id = cat["id"]
+                        st.session_state.recipe_active_type = rtype
+                        st.session_state.recipe_mode = "category_detail"
+                        st.rerun()
 
     # ======================================================
     # ADD CATEGORY
