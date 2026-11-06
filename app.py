@@ -1823,14 +1823,31 @@ elif page == "Recipes":
                     cols[3].write(f"**Cost:** ${cost:.2f}")
 
     elif st.session_state.recipe_mode == "categories":
-        with st.container(key="pills-rtype"):
-            picked = st.pills(
-                "Type", ["Prep", "Dish", "Beverage"],
-                default=st.session_state.recipe_active_type,
-                label_visibility="collapsed", key="recipe_type_pills",
-            )
-        rtype = picked or st.session_state.recipe_active_type
-        st.session_state.recipe_active_type = rtype
+        # --- Type tabs with recipe counts ---
+        conn_tc = db.get_connection()
+        type_total = {
+            t: conn_tc.execute(
+                "SELECT COUNT(*) AS n FROM recipes WHERE type = ?", (t,)
+            ).fetchone()["n"]
+            for t in ["Prep", "Dish", "Beverage"]
+        }
+        conn_tc.close()
+
+        tab_cols = st.columns(3)
+        for i, t in enumerate(["Prep", "Dish", "Beverage"]):
+            with tab_cols[i]:
+                cnt = type_total[t]
+                is_active = st.session_state.recipe_active_type == t
+                tab_label = f"{TYPE_EMOJI[t]} {t}  ·  {cnt}"
+                if st.button(
+                    tab_label,
+                    key=f"type_tab_{t}",
+                    type="primary" if is_active else "secondary",
+                    use_container_width=True,
+                ):
+                    st.session_state.recipe_active_type = t
+                    st.rerun()
+        rtype = st.session_state.recipe_active_type
 
         conn = db.get_connection()
         categories = conn.execute(
@@ -1844,7 +1861,12 @@ elif page == "Recipes":
         conn.close()
 
         if not categories:
-            st.info(f"No {rtype} categories yet. Click \"New category\" to create one (e.g. \"Coffee Preps\", \"Pasta\").")
+            st.info(
+                f"No **{rtype}** categories yet — {type_total[rtype]} recipe(s) in this type. "
+                f"Click **\"New category\"** above to create one (e.g. \"Coffee Preps\", \"Pasta\")."
+                if type_total[rtype]
+                else f"No **{rtype}** categories yet. Click **\"New category\"** above to create one."
+            )
         else:
             with st.container(key="grid4-recipecats"):
                 for cat in categories:
@@ -1856,7 +1878,13 @@ elif page == "Recipes":
                             st.session_state.recipe_mode = "category_detail"
                             st.rerun()
                         n = counts[cat["id"]]
-                        st.caption(f"{n} recipe{'s' if n != 1 else ''}")
+                        badge_color = _ACCENT if n > 0 else _N700
+                        st.markdown(
+                            f"<span style='background:{badge_color}22; color:{badge_color}; "
+                            f"border-radius:12px; padding:3px 12px; font-size:0.82rem; font-weight:600;'>"
+                            f"{n} recipe{'s' if n != 1 else ''}</span>",
+                            unsafe_allow_html=True
+                        )
 
     # ======================================================
     # ADD CATEGORY
