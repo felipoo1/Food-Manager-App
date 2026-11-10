@@ -2356,12 +2356,12 @@ elif page == "Recipes":
                 if rtype == "Prep":
                     col1, col2 = st.columns(2)
                     with col1:
-                        r_yield_qty = st.number_input("Yield quantity", min_value=0.0, step=1.0, help="How much this recipe produces")
+                        r_yield_qty = st.number_input("Yield quantity", min_value=0.0, step=1.0, value=None, help="How much this recipe produces")
                     with col2:
                         r_yield_unit = st.selectbox("Yield unit", ["g", "ml", "each"])
                     r_selling_price = None
                 else:
-                    r_selling_price = st.number_input("Selling price (SGD $)", min_value=0.0, step=0.01, format="%.2f")
+                    r_selling_price = st.number_input("Selling price (SGD $)", min_value=0.0, step=0.01, value=None)
                     r_yield_qty = None
                     r_yield_unit = None
 
@@ -2528,9 +2528,9 @@ elif page == "Recipes":
                     st.markdown(section_head("Price check", ""), unsafe_allow_html=True)
                     try_price = st.number_input(
                         "Selling price ($)", min_value=0.0, step=0.5,
-                        value=float(price), key=f"pricecheck_{selected_recipe_id}",
+                        value=float(price) if price else None, key=f"pricecheck_{selected_recipe_id}",
                     )
-                    st.markdown(price_check_html(per_portion, try_price), unsafe_allow_html=True)
+                    st.markdown(price_check_html(per_portion, try_price or 0), unsafe_allow_html=True)
                     if try_price != float(price):
                         if st.button("Save this price", type="primary", key=f"save_price_{selected_recipe_id}"):
                             c = db.get_connection()
@@ -2905,7 +2905,7 @@ elif page == "Recipes":
                 if is_prep:
                     d1, d2 = st.columns(2)
                     with d1:
-                        e_yield_qty = st.number_input("Yield qty", min_value=0.0, step=1.0, value=float(recipe["yield_qty"] or 0))
+                        e_yield_qty = st.number_input("Yield qty", min_value=0.0, step=1.0, value=float(recipe["yield_qty"]) if recipe["yield_qty"] else None)
                     with d2:
                         unit_choices = ["g", "ml", "each"]
                         e_yield_unit = st.selectbox("Unit", unit_choices, index=unit_choices.index(recipe["yield_unit"]) if recipe["yield_unit"] in unit_choices else 0)
