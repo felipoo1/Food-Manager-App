@@ -1775,20 +1775,40 @@ div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
             ).fetchone()["c"]
             conn.close()
 
+            warn_lines = []
             if used_in_recipes > 0:
-                st.error(f"Can't delete — this ingredient is used in {used_in_recipes} recipe line(s). Remove it from those recipes first.")
-            else:
-                if used_in_stock_takes > 0:
-                    st.caption(f"Note: this ingredient has {used_in_stock_takes} past stock take record(s), which will also be removed.")
-                if st.button("Delete this ingredient", key=f"delete_ing_{selected_id}"):
-                    conn = db.get_connection()
-                    conn.execute("DELETE FROM ingredients WHERE id=?", (selected_id,))
-                    conn.commit()
-                    conn.close()
-                    db.get_cached_ingredients_basic.clear()
-                    st.success(f"Deleted {current['name']}.")
-                    st.session_state.stock_mode = "list"
+                warn_lines.append(f"{used_in_recipes} recipe line(s)")
+            if used_in_stock_takes > 0:
+                warn_lines.append(f"{used_in_stock_takes} stock take record(s)")
+
+            if warn_lines:
+                st.warning(f"This ingredient appears in {' and '.join(warn_lines)}. Deleting it will permanently remove those records too.")
+
+            confirm_key = f"confirm_delete_ing_{selected_id}"
+            if not st.session_state.get(confirm_key):
+                if st.button("Delete this ingredient", key=f"delete_ing_{selected_id}", type="secondary"):
+                    st.session_state[confirm_key] = True
                     st.rerun()
+            else:
+                st.error("This cannot be undone. Are you sure?")
+                col_yes, col_no = st.columns([1, 1])
+                with col_yes:
+                    if st.button("Yes, delete permanently", key=f"confirm_yes_{selected_id}", type="primary"):
+                        conn = db.get_connection()
+                        conn.execute("DELETE FROM recipe_lines WHERE ingredient_id=?", (selected_id,))
+                        conn.execute("DELETE FROM stock_takes WHERE ingredient_id=?", (selected_id,))
+                        conn.execute("DELETE FROM ingredients WHERE id=?", (selected_id,))
+                        conn.commit()
+                        conn.close()
+                        db.get_cached_ingredients_basic.clear()
+                        st.session_state.pop(confirm_key, None)
+                        st.success(f"Deleted {current['name']}.")
+                        st.session_state.stock_mode = "list"
+                        st.rerun()
+                with col_no:
+                    if st.button("Cancel", key=f"confirm_no_{selected_id}"):
+                        st.session_state.pop(confirm_key, None)
+                        st.rerun()
 
 
 # =========================================================
