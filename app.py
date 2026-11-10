@@ -573,10 +573,7 @@ page = st.session_state.current_page
 
 st.sidebar.divider()
 
-conn = db.get_connection()
-notif_count = conn.execute("SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0").fetchone()["c"]
-error_count = conn.execute("SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0 AND kind = 'error'").fetchone()["c"]
-conn.close()
+notif_count, error_count = db.get_notification_counts()
 
 bell_label = f"Notifications ({notif_count})" if notif_count else "Notifications"
 if error_count:
@@ -604,6 +601,7 @@ if st.session_state.get("show_notifications"):
 
     if unread_ids:
         db.mark_all_notifications_read()
+        db.get_notification_counts.clear()
 
     if not notif_rows:
         st.info("No notifications yet.")
@@ -671,6 +669,7 @@ if st.session_state.get("show_change_pin"):
     st.stop()
 
 
+@st.cache_data(ttl=60)
 def get_supplier_options():
     """Returns a dict of {supplier_name: supplier_id} plus a 'None' option, for dropdowns."""
     conn = db.get_connection()
@@ -1557,7 +1556,7 @@ div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
 
         base_unit, factor = UNIT_MAP[pack_unit_choice]
         purchase_price = st.number_input(
-            "Total price you pay for ONE pack ($, incl. GST)", min_value=0.0, step=0.01, key="add_ing_price"
+            "Total price you pay for ONE pack ($)", min_value=0.0, step=0.01, key="add_ing_price"
         )
 
         if pack_qty_input > 0 and purchase_price > 0:
@@ -1685,7 +1684,7 @@ div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
 
             e_base_unit, e_factor = UNIT_MAP[e_pack_unit_choice]
             e_purchase_price = st.number_input(
-                "Total price you pay for ONE pack ($, incl. GST)", min_value=0.0, step=0.01,
+                "Total price you pay for ONE pack ($)", min_value=0.0, step=0.01,
                 value=float(current["purchase_price"] or 0), key=f"edit_ing_price_{selected_id}"
             )
 
@@ -1862,21 +1861,89 @@ elif page == "Recipes":
     TYPE_COLOR = {"Prep": "#c0b6a5", "Dish": "#c0b6a5", "Beverage": "#c0b6a5"}
 
     def recipe_options(type_filter=None, category_filter=None, exclude_id=None):
-        conn = db.get_connection()
-        query = "SELECT id, name FROM recipes"
-        clauses, params = [], []
-        if type_filter:
-            clauses.append("type = ?")
-            params.append(type_filter)
-        if category_filter is not None:
-            clauses.append("category_id = ?")
-            params.append(category_filter)
-        if clauses:
-            query += " WHERE " + " AND ".join(clauses)
-        query += " ORDER BY name"
-        rows = conn.execute(query, params).fetchall()
-        conn.close()
-        return {r["name"]: r["id"] for r in rows if r["id"] != exclude_id}
+        """In-memory filter over the cached recipe list — zero DB calls."""
+        all_recipes = db.get_cached_recipes()
+        result = {}
+        for r in all_recipes:
+            if exclude_id and r["id"] == exclude_id:
+                continue
+            if type_filter and r["type"] != type_filter:
+                continue
+            if category_filter is not None and r["category_id"] != category_filter:
+                continue
+            result[r["name"]] = r["id"]
+        return result
+
+    # ── Ingredient detail modal ───────────────────────────────
+    @st.dialog("Ingredient details", width="large")
+    def _ingredient_panel(ing_id: int, panel_line_id: int):
+        p_conn = db.get_connection()
+        p_ing = p_conn.execute(
+            """SELECT i.*, s.name AS supplier_name
+               FROM ingredients i
+               LEFT JOIN suppliers s ON i.primary_supplier_id = s.id
+               WHERE i.id = ?""", (ing_id,)
+        ).fetchone()
+        p_conn.close()
+
+        if not p_ing:
+            st.error("Ingredient details not found.")
+            return
+
+        cost_per = db.cost_per_recipe_unit(p_ing)
+        price_line = (
+            f"${p_ing['purchase_price']:.2f} / {p_ing['purchase_size_label']}"
+            if p_ing["purchase_price"] else "No price set"
+        )
+        unit_cost_line = (
+            f"${cost_per:.4f} per {p_ing['recipe_unit_qty']:g}{p_ing['base_unit']}"
+            if cost_per else "—"
+        )
+        sup = p_ing["supplier_name"] or "No supplier set"
+
+        st.markdown(
+            f'<div style="font-size:0.9rem;color:#645c50;line-height:2">'
+            f'<b style="color:#201e1d;font-size:1.05rem">{p_ing["name"]}</b> '
+            f'<span style="color:#a29884">· {p_ing["category"] or "Uncategorised"}</span><br>'
+            f'Purchase price: {price_line}<br>'
+            f'Unit cost: {unit_cost_line}<br>'
+            f'Supplier: {sup}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        st.divider()
+        st.markdown("**Replace in this recipe line**")
+        all_ings_basic = db.get_cached_ingredients_basic()
+        swap_opts = {
+            f"{r['name']} ({r['base_unit']})": r["id"]
+            for r in all_ings_basic if r["id"] != ing_id
+        }
+        swap_choice = st.selectbox(
+            "Replace with", list(swap_opts.keys()),
+            index=None, placeholder="Search ingredients…",
+            label_visibility="collapsed",
+        )
+        swap_id = swap_opts[swap_choice] if swap_choice else None
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if swap_id and st.button("Replace", type="primary", use_container_width=True):
+                sw_conn = db.get_connection()
+                sw_conn.execute(
+                    "UPDATE recipe_lines SET ingredient_id=? WHERE id=?",
+                    (swap_id, panel_line_id)
+                )
+                sw_conn.commit()
+                sw_conn.close()
+                st.rerun()
+        with col2:
+            if st.button("Edit in Stock List", type="secondary", use_container_width=True):
+                st.session_state.stock_mode = "edit"
+                st.session_state["edit_ingredient_select"] = (
+                    f"{p_ing['name']} ({p_ing['purchase_size_label']})"
+                )
+                st.session_state.current_page = "Master Stock List"
+                st.rerun()
 
     def render_category_image_or_placeholder(image_url, rtype, height_px=140):
         if image_url:
@@ -1897,7 +1964,7 @@ elif page == "Recipes":
         st.session_state.recipe_active_type = "Prep"
 
     if page_header(
-        "Recipes", "Costed from the master stock list. Costs include 9% GST.",
+        "Recipes", "Costed from the master stock list.",
         "New category" if st.session_state.recipe_mode == "categories" else None, key="newcat_btn",
     ):
         st.session_state.recipe_mode = "add_category"
@@ -1950,15 +2017,12 @@ elif page == "Recipes":
                     cols[3].write(f"**Cost:** ${cost:.2f}")
 
     elif st.session_state.recipe_mode == "categories":
-        # --- Type tabs with recipe counts ---
-        conn_tc = db.get_connection()
-        type_total = {
-            t: conn_tc.execute(
-                "SELECT COUNT(*) AS n FROM recipes WHERE type = ?", (t,)
-            ).fetchone()["n"]
-            for t in ["Prep", "Dish", "Beverage"]
-        }
-        conn_tc.close()
+        # --- Type tabs with recipe counts (from cache — zero extra DB calls) ---
+        _all_recipes_cache = db.get_cached_recipes()
+        type_total = {"Prep": 0, "Dish": 0, "Beverage": 0}
+        for _r in _all_recipes_cache:
+            if _r["type"] in type_total:
+                type_total[_r["type"]] += 1
 
         st.markdown("""<style>
 .st-key-type_tab_Prep button, .st-key-type_tab_Dish button, .st-key-type_tab_Beverage button {
@@ -2103,7 +2167,7 @@ elif page == "Recipes":
                 st.session_state.recipe_mode = "remove_category"
                 st.rerun()
 
-        st.caption("Click a recipe name to edit it. Costs shown include 9% GST.")
+        st.caption("Click a recipe name to edit it.")
 
         conn = db.get_connection()
         recipes_in_cat = conn.execute(
@@ -2319,6 +2383,7 @@ elif page == "Recipes":
                         ))
                         conn.commit()
                         conn.close()
+                        db.get_cached_recipes.clear()
                         st.success(f"✅ Added **{r_name}** — click its name in the list to add ingredients.")
                         st.session_state.recipe_mode = "category_detail"
                         st.rerun()
@@ -2404,7 +2469,7 @@ elif page == "Recipes":
             st.markdown(recipe_stats_html(recipe, live_cost, per_portion, price, len(costed), is_prep), unsafe_allow_html=True)
             st.markdown(section_head(
                 "Ingredients",
-                "Whole batch · prices incl. 9% GST" if is_prep else "Per recipe · prices incl. 9% GST",
+                "Whole batch" if is_prep else "Per recipe",
             ), unsafe_allow_html=True)
 
             with st.container(key="costtable"):
@@ -2416,7 +2481,6 @@ elif page == "Recipes":
                         h = st.columns(CC, vertical_alignment="center")
                         for col, label in zip(h, ["Ingredient", "Qty", "Line cost", "Share", ""]):
                             col.markdown(label)
-                    _active_panel = st.session_state.get("recipe_ing_panel")
                     for line, name, qty, lc, sub in costed:
                         share = (lc / live_cost * 100) if live_cost else 0
                         with st.container(key=f"costrow-{line['id']}"):
@@ -2424,14 +2488,10 @@ elif page == "Recipes":
                             prep_chip = " " + tag("Prep", "ok") if sub else ""
                             warn_txt = " · no price set" if (lc == 0 and not sub) else ""
                             if not sub:
-                                # Clickable button styled as the ingredient name
+                                # Clickable button — opens the ingredient detail modal
                                 btn_label = f"{name}{warn_txt}"
                                 if c1.button(btn_label, key=f"ing-detail-btn-{line['id']}", type="tertiary"):
-                                    if _active_panel == line["id"]:
-                                        st.session_state.pop("recipe_ing_panel", None)
-                                    else:
-                                        st.session_state["recipe_ing_panel"] = line["id"]
-                                    st.rerun()
+                                    _ingredient_panel(line["ingredient_id"], line["id"])
                             else:
                                 c1.markdown(
                                     f'<div style="font-weight:700;font-size:0.9rem;line-height:1.3">{name}{prep_chip}</div>',
@@ -2453,84 +2513,7 @@ elif page == "Recipes":
                                     c.execute("DELETE FROM recipe_lines WHERE id = ?", (line["id"],))
                                     c.commit()
                                     c.close()
-                                    st.session_state.pop("recipe_ing_panel", None)
                                     st.rerun()
-
-                    # ── Inline ingredient detail panel ─────────────
-                    panel_line_id = st.session_state.get("recipe_ing_panel")
-                    if panel_line_id:
-                        panel_entry = next(
-                            ((l, lc_) for l, _, _, lc_, sub_ in costed
-                             if l["id"] == panel_line_id and not sub_), None
-                        )
-                        if panel_entry:
-                            p_line, p_lc = panel_entry
-                            ing_id = p_line["ingredient_id"]
-                            p_conn = db.get_connection()
-                            p_ing = p_conn.execute(
-                                """SELECT i.*, s.name AS supplier_name
-                                   FROM ingredients i
-                                   LEFT JOIN suppliers s ON i.primary_supplier_id = s.id
-                                   WHERE i.id = ?""", (ing_id,)
-                            ).fetchone()
-                            p_conn.close()
-                            with st.container(key="ing-detail-panel"):
-                                pc1, pc2 = st.columns([3, 2])
-                                with pc1:
-                                    if p_ing:
-                                        cost_per = db.cost_per_recipe_unit(p_ing)
-                                        price_line = (
-                                            f"${p_ing['purchase_price']:.2f} / {p_ing['purchase_size_label']}"
-                                            if p_ing["purchase_price"] else "No price set"
-                                        )
-                                        unit_cost_line = (
-                                            f"${cost_per:.4f} per {p_ing['recipe_unit_qty']:g}{p_ing['base_unit']}"
-                                            if cost_per else "—"
-                                        )
-                                        sup = p_ing["supplier_name"] or "No supplier"
-                                        st.markdown(
-                                            f'<div style="font-size:0.82rem;color:#645c50;line-height:1.9">'
-                                            f'<b style="color:#201e1d;font-size:0.9rem">{p_ing["name"]}</b> '
-                                            f'<span style="color:#a29884">· {p_ing["category"] or "Uncategorised"}</span><br>'
-                                            f'Purchase: {price_line}<br>'
-                                            f'Unit cost: {unit_cost_line}<br>'
-                                            f'Supplier: {sup}'
-                                            f'</div>',
-                                            unsafe_allow_html=True,
-                                        )
-                                    else:
-                                        st.caption("Ingredient details not found.")
-                                with pc2:
-                                    st.markdown('<div style="font-size:0.8rem;font-weight:700;color:#645c50;margin-bottom:4px">Replace in this recipe line</div>', unsafe_allow_html=True)
-                                    all_ings_basic = db.get_cached_ingredients_basic()
-                                    swap_opts = {f"{r['name']} ({r['base_unit']})": r["id"] for r in all_ings_basic if r["id"] != ing_id}
-                                    swap_choice = st.selectbox(
-                                        "Replace with", list(swap_opts.keys()),
-                                        index=None, placeholder="Search ingredients…",
-                                        key=f"swap_ing_{panel_line_id}",
-                                        label_visibility="collapsed",
-                                    )
-                                    swap_id = swap_opts[swap_choice] if swap_choice else None
-                                    sb1, sb2 = st.columns(2)
-                                    with sb1:
-                                        if swap_id and st.button("Replace", key=f"swap_confirm_{panel_line_id}", type="primary"):
-                                            sw_conn = db.get_connection()
-                                            sw_conn.execute(
-                                                "UPDATE recipe_lines SET ingredient_id=? WHERE id=?",
-                                                (swap_id, panel_line_id)
-                                            )
-                                            sw_conn.commit()
-                                            sw_conn.close()
-                                            st.session_state.pop("recipe_ing_panel", None)
-                                            st.rerun()
-                                    with sb2:
-                                        if st.button("Edit in Stock List", key=f"goto_msl_{panel_line_id}", type="secondary"):
-                                            st.session_state.stock_mode = "edit"
-                                            if p_ing:
-                                                st.session_state["edit_ingredient_select"] = f"{p_ing['name']} ({p_ing['purchase_size_label']})"
-                                            st.session_state.current_page = "Master Stock List"
-                                            st.session_state.pop("recipe_ing_panel", None)
-                                            st.rerun()
                     st.markdown(
                         f'<div style="display:flex;align-items:baseline;gap:10px;padding:10px 0 4px;border-top:1px solid #dcd3c4">'
                         f'<span style="flex:1;font-weight:700">{"Batch cost" if is_prep else ("Cost per portion" if portions else "Total cost")}</span>'
@@ -2544,7 +2527,7 @@ elif page == "Recipes":
                 with st.container(key="pricecheck"):
                     st.markdown(section_head("Price check", ""), unsafe_allow_html=True)
                     try_price = st.number_input(
-                        "Selling price (incl. GST) $", min_value=0.0, step=0.5,
+                        "Selling price ($)", min_value=0.0, step=0.5,
                         value=float(price), key=f"pricecheck_{selected_recipe_id}",
                     )
                     st.markdown(price_check_html(per_portion, try_price), unsafe_allow_html=True)
@@ -2594,25 +2577,7 @@ elif page == "Recipes":
     color: #c67139 !important;
     text-decoration-color: #c67139 !important;
 }
-/* Inline detail panel */
-.st-key-ing-detail-panel {
-    background: #fbf7f1 !important;
-    border: 1.5px solid #e7ddcb !important;
-    border-radius: 12px !important;
-    padding: 14px 18px 10px !important;
-    margin: 4px 0 8px !important;
-}
-.st-key-ing-detail-panel div[data-baseweb="select"] > div {
-    background: #fff !important;
-    border: 1.5px solid #e7ddcb !important;
-    border-radius: 10px !important;
-    font-family: Nunito, sans-serif !important;
-    font-size: 0.88rem !important;
-    min-height: 36px !important;
-}
-.st-key-ing-detail-panel div[data-testid="stButton"] button {
-    font-size: 0.85rem !important;
-}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -3003,6 +2968,7 @@ elif page == "Recipes":
                     conn.execute("DELETE FROM recipes WHERE id = ?", (selected_recipe_id,))
                     conn.commit()
                     conn.close()
+                    db.get_cached_recipes.clear()
                     st.session_state.recipe_mode = "category_detail"
                     st.rerun()
 
@@ -4201,6 +4167,7 @@ elif page == "Import Costing Sheet":
                         errors.append(f"{recipe['name']}: {e}")
 
                 conn.close()
+                db.get_cached_recipes.clear()
                 del st.session_state.cs_recipes
                 del st.session_state.cs_ing_by_name
                 del st.session_state.cs_prep_by_name
