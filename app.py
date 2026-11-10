@@ -2394,19 +2394,27 @@ elif page == "Recipes":
                         h = st.columns(CC, vertical_alignment="center")
                         for col, label in zip(h, ["Ingredient", "Qty", "Line cost", "Share", ""]):
                             col.markdown(label)
+                    _active_panel = st.session_state.get("recipe_ing_panel")
                     for line, name, qty, lc, sub in costed:
                         share = (lc / live_cost * 100) if live_cost else 0
                         with st.container(key=f"costrow-{line['id']}"):
                             c1, c2, c3, c4, c5 = st.columns(CC, vertical_alignment="center")
                             prep_chip = " " + tag("Prep", "ok") if sub else ""
-                            warn = (
-                                ' <span style="font-size:0.72rem;font-weight:400;color:#a29884">· no price set</span>'
-                                if lc == 0 else ""
-                            )
-                            c1.markdown(
-                                f'<div style="font-weight:700;font-size:0.9rem;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{name}{prep_chip}{warn}</div>',
-                                unsafe_allow_html=True,
-                            )
+                            warn_txt = " · no price set" if (lc == 0 and not sub) else ""
+                            if not sub:
+                                # Clickable button styled as the ingredient name
+                                btn_label = f"{name}{warn_txt}"
+                                if c1.button(btn_label, key=f"ing-detail-btn-{line['id']}", type="tertiary"):
+                                    if _active_panel == line["id"]:
+                                        st.session_state.pop("recipe_ing_panel", None)
+                                    else:
+                                        st.session_state["recipe_ing_panel"] = line["id"]
+                                    st.rerun()
+                            else:
+                                c1.markdown(
+                                    f'<div style="font-weight:700;font-size:0.9rem;line-height:1.3">{name}{prep_chip}</div>',
+                                    unsafe_allow_html=True,
+                                )
                             c2.markdown(f'<span style="font-size:0.86rem;color:#645c50">{qty}</span>', unsafe_allow_html=True)
                             c3.markdown(f'<span style="font-size:0.9rem;font-weight:700">${lc:.2f}</span>', unsafe_allow_html=True)
                             bar = "#c67139" if share >= 40 else "#82796a"
@@ -2423,7 +2431,83 @@ elif page == "Recipes":
                                     c.execute("DELETE FROM recipe_lines WHERE id = ?", (line["id"],))
                                     c.commit()
                                     c.close()
+                                    st.session_state.pop("recipe_ing_panel", None)
                                     st.rerun()
+
+                    # ── Inline ingredient detail panel ─────────────
+                    panel_line_id = st.session_state.get("recipe_ing_panel")
+                    if panel_line_id:
+                        panel_entry = next(
+                            ((l, lc_) for l, _, _, lc_, sub_ in costed
+                             if l["id"] == panel_line_id and not sub_), None
+                        )
+                        if panel_entry:
+                            p_line, p_lc = panel_entry
+                            ing_id = p_line["ingredient_id"]
+                            p_conn = db.get_connection()
+                            p_ing = p_conn.execute(
+                                """SELECT i.*, s.name AS supplier_name
+                                   FROM ingredients i
+                                   LEFT JOIN suppliers s ON i.primary_supplier_id = s.id
+                                   WHERE i.id = ?""", (ing_id,)
+                            ).fetchone()
+                            p_conn.close()
+                            with st.container(key="ing-detail-panel"):
+                                pc1, pc2 = st.columns([3, 2])
+                                with pc1:
+                                    if p_ing:
+                                        cost_per = db.cost_per_recipe_unit(p_ing)
+                                        price_line = (
+                                            f"${p_ing['purchase_price']:.2f} / {p_ing['purchase_size_label']}"
+                                            if p_ing["purchase_price"] else "No price set"
+                                        )
+                                        unit_cost_line = (
+                                            f"${cost_per:.4f} per {p_ing['recipe_unit_qty']:g}{p_ing['base_unit']}"
+                                            if cost_per else "—"
+                                        )
+                                        sup = p_ing["supplier_name"] or "No supplier"
+                                        st.markdown(
+                                            f'<div style="font-size:0.82rem;color:#645c50;line-height:1.9">'
+                                            f'<b style="color:#201e1d;font-size:0.9rem">{p_ing["name"]}</b> '
+                                            f'<span style="color:#a29884">· {p_ing["category"] or "Uncategorised"}</span><br>'
+                                            f'Purchase: {price_line}<br>'
+                                            f'Unit cost: {unit_cost_line}<br>'
+                                            f'Supplier: {sup}'
+                                            f'</div>',
+                                            unsafe_allow_html=True,
+                                        )
+                                    else:
+                                        st.caption("Ingredient details not found.")
+                                with pc2:
+                                    st.markdown('<div style="font-size:0.8rem;font-weight:700;color:#645c50;margin-bottom:4px">Replace in this recipe line</div>', unsafe_allow_html=True)
+                                    all_ings_basic = db.get_cached_ingredients_basic()
+                                    swap_opts = {f"{r['name']} ({r['base_unit']})": r["id"] for r in all_ings_basic if r["id"] != ing_id}
+                                    swap_choice = st.selectbox(
+                                        "Replace with", list(swap_opts.keys()),
+                                        index=None, placeholder="Search ingredients…",
+                                        key=f"swap_ing_{panel_line_id}",
+                                        label_visibility="collapsed",
+                                    )
+                                    swap_id = swap_opts[swap_choice] if swap_choice else None
+                                    sb1, sb2 = st.columns(2)
+                                    with sb1:
+                                        if swap_id and st.button("Replace", key=f"swap_confirm_{panel_line_id}", type="primary"):
+                                            sw_conn = db.get_connection()
+                                            sw_conn.execute(
+                                                "UPDATE recipe_lines SET ingredient_id=? WHERE id=?",
+                                                (swap_id, panel_line_id)
+                                            )
+                                            sw_conn.commit()
+                                            sw_conn.close()
+                                            st.session_state.pop("recipe_ing_panel", None)
+                                            st.rerun()
+                                    with sb2:
+                                        if st.button("Edit in Stock List", key=f"goto_msl_{panel_line_id}", type="secondary"):
+                                            st.session_state.stock_mode = "edit"
+                                            st.session_state["edit_ingredient_select"] = p_ing["name"] if p_ing else ""
+                                            st.session_state.current_page = "Master Stock List"
+                                            st.session_state.pop("recipe_ing_panel", None)
+                                            st.rerun()
                     st.markdown(
                         f'<div style="display:flex;align-items:baseline;gap:10px;padding:10px 0 4px;border-top:1px solid #dcd3c4">'
                         f'<span style="flex:1;font-weight:700">{"Batch cost" if is_prep else ("Cost per portion" if portions else "Total cost")}</span>'
@@ -2452,7 +2536,7 @@ elif page == "Recipes":
             # ── Add ingredient — inline row ────────────────────
             st.markdown(section_head("Add ingredient", ""), unsafe_allow_html=True)
 
-            # CSS: suppress faint divider lines on keyed containers in ingredient table
+            # CSS: suppress faint divider lines + style clickable ingredient names
             st.markdown("""
 <style>
 .st-key-costtable > div, .st-key-costhead > div,
@@ -2467,6 +2551,44 @@ elif page == "Recipes":
 .st-key-costhead [data-testid="stHorizontalBlock"] {
     border-bottom: 2px solid #e7ddcb !important;
     padding-bottom: 6px;
+}
+/* Ingredient name as link-style button */
+[class*="st-key-costrow-"] div[data-testid="stButton"] button {
+    background: none !important;
+    border: none !important;
+    padding: 0 !important;
+    font-weight: 700 !important;
+    font-size: 0.9rem !important;
+    color: #201e1d !important;
+    text-decoration: underline dotted #a29884 !important;
+    text-underline-offset: 3px !important;
+    box-shadow: none !important;
+    min-height: unset !important;
+    line-height: 1.3 !important;
+    text-align: left !important;
+}
+[class*="st-key-costrow-"] div[data-testid="stButton"] button:hover {
+    color: #c67139 !important;
+    text-decoration-color: #c67139 !important;
+}
+/* Inline detail panel */
+.st-key-ing-detail-panel {
+    background: #fbf7f1 !important;
+    border: 1.5px solid #e7ddcb !important;
+    border-radius: 12px !important;
+    padding: 14px 18px 10px !important;
+    margin: 4px 0 8px !important;
+}
+.st-key-ing-detail-panel div[data-baseweb="select"] > div {
+    background: #fff !important;
+    border: 1.5px solid #e7ddcb !important;
+    border-radius: 10px !important;
+    font-family: Nunito, sans-serif !important;
+    font-size: 0.88rem !important;
+    min-height: 36px !important;
+}
+.st-key-ing-detail-panel div[data-testid="stButton"] button {
+    font-size: 0.85rem !important;
 }
 </style>
 """, unsafe_allow_html=True)
