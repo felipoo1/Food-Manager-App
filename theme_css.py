@@ -675,10 +675,14 @@ def price_check_html(cost, price) -> str:
         head = f"Within the {TARGET_FOOD_COST}% target"
         sub = (f"You could go down to ${target_price:.2f} before food cost passes {TARGET_FOOD_COST}%."
                if cost else "No ingredient costs yet — check prices on the Master Stock List.")
+    fc_label = f"{fc:.0f}% food cost"
     return (
         f'{body}<div style="padding:12px 14px;border-radius:14px;background:{bg};color:{fg}">'
-        f'<div style="font-weight:700;font-size:0.88rem">{head}</div>'
-        f'<div style="font-size:0.8rem;line-height:1.4;margin-top:2px">{sub}</div></div>'
+        f'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
+        f'<span style="font-weight:700;font-size:0.88rem">{head}</span>'
+        f'<span style="font-size:0.78rem;font-weight:700;opacity:0.75;white-space:nowrap">{fc_label}</span>'
+        f'</div>'
+        f'<div style="font-size:0.8rem;line-height:1.4;margin-top:5px;opacity:0.85">{sub}</div></div>'
     )
 
 
