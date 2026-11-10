@@ -561,6 +561,11 @@ def _nav_item(option):
     else:
         if st.sidebar.button(option, icon=icon, type="tertiary", width="stretch", key=f"nav_{option}"):
             st.session_state.current_page = option
+            # Reset page-level sub-modes so navigating back always starts at the top
+            if option == "Recipes":
+                st.session_state.recipe_mode = "categories"
+            if option == "Master Stock List":
+                st.session_state.stock_mode = "view"
             st.rerun()
 
 
@@ -2851,11 +2856,17 @@ elif page == "Recipes":
     color: #c67139 !important;
     background: #fff2eb !important;
 }
-/* number stepper +/- buttons */
+/* hide +/- stepper buttons on all number inputs */
+button[data-testid="stNumberInputStepDown"],
+button[data-testid="stNumberInputStepUp"] {
+    display: none !important;
+}
+/* number stepper +/- buttons — recipe edit forms (keep styled, override display) */
 [data-testid="stForm"][id*="edit_recipe_details_"] button[data-testid="stNumberInputStepDown"],
 [data-testid="stForm"][id*="edit_recipe_details_"] button[data-testid="stNumberInputStepUp"],
 [data-testid="stForm"][id*="add_conversion_"] button[data-testid="stNumberInputStepDown"],
 [data-testid="stForm"][id*="add_conversion_"] button[data-testid="stNumberInputStepUp"] {
+    display: flex !important;
     background: #f5ede0 !important;
     border: none !important;
     color: #8c491a !important;
