@@ -115,6 +115,40 @@ def get_cached_ingredients_basic():
     return [dict(r) for r in rows]
 
 
+@st.cache_data(ttl=30)
+def get_cached_recipes():
+    """
+    Cached list of all recipes (id, name, type, category_id) -- used for
+    recipe dropdowns and the type-tab counts. One DB round-trip shared
+    across every recipe_options() call in the same 30-second window.
+    Call .clear() after any recipe is added, renamed, or deleted.
+    """
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT id, name, type, category_id FROM recipes ORDER BY name"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@st.cache_data(ttl=15)
+def get_notification_counts():
+    """
+    Cached unread notification counts for the sidebar badge.
+    Short TTL (15 s) keeps it snappy without hitting DB on every click.
+    Call .clear() after marking notifications read.
+    """
+    conn = get_connection()
+    total = conn.execute(
+        "SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0"
+    ).fetchone()["c"]
+    errors = conn.execute(
+        "SELECT COUNT(*) AS c FROM notifications WHERE is_read = 0 AND kind = 'error'"
+    ).fetchone()["c"]
+    conn.close()
+    return int(total), int(errors)
+
+
 def get_connection():
     """Borrows a connection from the pool (instead of opening a new one each time)."""
     pool = _get_pool()
