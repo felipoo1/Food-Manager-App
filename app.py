@@ -2549,10 +2549,17 @@ elif page == "Recipes":
 [class*="st-key-costrow-"] > div {
     border: none !important;
     box-shadow: none !important;
+    background: transparent !important;
+}
+/* remove any white gaps between rows */
+[class*="st-key-costrow-"] > div > div,
+.st-key-costhead > div > div {
+    background: transparent !important;
 }
 .st-key-costtable [data-testid="stHorizontalBlock"] {
     border-bottom: 1px solid #f0ebe1;
     padding: 4px 0;
+    align-items: center;
 }
 .st-key-costhead [data-testid="stHorizontalBlock"] {
     border-bottom: 2px solid #e7ddcb !important;
@@ -2615,12 +2622,38 @@ elif page == "Recipes":
     font-family: Nunito, sans-serif !important;
     font-weight: 700 !important;
 }
-/* component toggle pills */
+/* component toggle — segmented pill control */
+.st-key-add-ing-row div[data-testid="stRadio"] > div {
+    display: inline-flex !important;
+    background: #ece7de !important;
+    border-radius: 999px !important;
+    padding: 3px !important;
+    gap: 2px !important;
+}
 .st-key-add-ing-row div[data-testid="stRadio"] label {
     font-family: Nunito, sans-serif !important;
     font-size: 0.82rem !important;
     font-weight: 600 !important;
     color: #645c50 !important;
+    padding: 4px 14px !important;
+    border-radius: 999px !important;
+    cursor: pointer !important;
+    margin: 0 !important;
+    transition: background 0.15s, color 0.15s !important;
+    white-space: nowrap !important;
+}
+.st-key-add-ing-row div[data-testid="stRadio"] label:has(input:checked) {
+    background: #fff !important;
+    color: #201e1d !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12) !important;
+}
+/* hide the radio circle itself */
+.st-key-add-ing-row div[data-testid="stRadio"] [data-baseweb="radio"] {
+    display: none !important;
+}
+.st-key-add-ing-row div[data-testid="stRadio"] p {
+    font-size: 0.82rem !important;
+    margin: 0 !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -2651,7 +2684,7 @@ elif page == "Recipes":
                         with ai_c2:
                             qty = st.number_input(
                                 f"Qty ({chosen_unit})" if chosen_unit else "Qty",
-                                min_value=0.0, step=1.0,
+                                min_value=0.0, step=1.0, value=None,
                                 key=f"add_line_qty_ingredient_{selected_recipe_id}",
                                 label_visibility="collapsed",
                             )
@@ -2702,9 +2735,9 @@ elif page == "Recipes":
                             entry_unit = st.selectbox("Unit", unit_options,
                                 key=f"add_line_prep_unit_{selected_recipe_id}", label_visibility="collapsed")
                         with ai_c3:
-                            qty_entered = st.number_input(f"{entry_unit}", min_value=0.0, step=1.0,
+                            qty_entered = st.number_input(f"{entry_unit}", min_value=0.0, step=1.0, value=None,
                                 key=f"add_line_qty_prep_{selected_recipe_id}", label_visibility="collapsed")
-                        qty = db.convert_to_base_unit(chosen_id, qty_entered, entry_unit, prep_unit) if chosen_id else 0
+                        qty = db.convert_to_base_unit(chosen_id, qty_entered or 0, entry_unit, prep_unit) if chosen_id else 0
                         if chosen_id:
                             _preview_conn = db.get_connection()
                             _preview_cost = db.compute_line_cost(
@@ -2729,7 +2762,7 @@ elif page == "Recipes":
                         chosen_id, qty, add_clicked = None, 0, False
 
             if add_clicked:
-                if not chosen_id or qty <= 0:
+                if not chosen_id or not qty or qty <= 0:
                     st.error("Choose a component and enter a quantity greater than zero.")
                 else:
                     conn = db.get_connection()
@@ -2828,6 +2861,13 @@ elif page == "Recipes":
     color: #8c491a !important;
     border-radius: 8px !important;
 }
+/* Tags row — compact layout */
+.st-key-tag-row {
+    margin-top: -6px !important;
+}
+.st-key-tag-row [data-testid="stHorizontalBlock"] {
+    align-items: center !important;
+}
 /* Tags row — multiselect + text input */
 .st-key-tag-row span[data-baseweb="tag"] {
     background: #fff2eb !important;
@@ -2873,9 +2913,12 @@ elif page == "Recipes":
                 else:
                     d1, d2 = st.columns(2)
                     with d1:
-                        e_selling_price = st.number_input("Selling price $", min_value=0.0, step=0.01, value=float(recipe["selling_price"] or 0))
+                        e_selling_price = st.number_input("Selling price $", min_value=0.0, step=0.01,
+                            value=float(recipe["selling_price"]) if recipe["selling_price"] else None)
                     with d2:
-                        e_portions = st.number_input("Portions", min_value=0.0, step=1.0, value=float(recipe["portions"] or 0), help="Leave 0 if already one serving")
+                        e_portions = st.number_input("Portions", min_value=0.0, step=1.0,
+                            value=float(recipe["portions"]) if recipe["portions"] and recipe["portions"] > 0 else None,
+                            help="Leave blank if already one serving")
                     e_yield_qty, e_yield_unit = None, None
                 if st.form_submit_button("Save changes"):
                     if not e_name:
@@ -2900,12 +2943,14 @@ elif page == "Recipes":
             current_tags = [t.strip() for t in (recipe["tags"] or "").split(",") if t.strip()]
             st.markdown(section_head("Tags", ", ".join(current_tags) if current_tags else "none"), unsafe_allow_html=True)
             with st.container(key="tag-row"):
-                tag_col1, tag_col2 = st.columns([3, 2])
+                tag_col1, tag_col2, tag_col3 = st.columns([3, 2, 1])
                 with tag_col1:
                     chosen_tags = st.multiselect("Tags", options=sorted(set(all_known_tags) | set(current_tags)), default=current_tags, key=f"tags_select_{selected_recipe_id}", label_visibility="collapsed")
                 with tag_col2:
-                    new_tag = st.text_input("New tag", placeholder="Add a tag…", key=f"new_tag_{selected_recipe_id}", label_visibility="collapsed")
-            if st.button("Save tags", key=f"save_tags_{selected_recipe_id}"):
+                    new_tag = st.text_input("New tag", placeholder="New tag…", key=f"new_tag_{selected_recipe_id}", label_visibility="collapsed")
+                with tag_col3:
+                    _save_tags_btn = st.button("Save", key=f"save_tags_{selected_recipe_id}", use_container_width=True)
+            if _save_tags_btn:
                 final_tags = list(chosen_tags)
                 if new_tag.strip() and new_tag.strip() not in final_tags:
                     final_tags.append(new_tag.strip())

@@ -642,11 +642,24 @@ def price_check_html(cost, price) -> str:
     if price <= 0:
         return f'<div style="font-size:0.85rem;color:{N700}">Enter a selling price to see food cost and margin.</div>'
     ex = price / 1.09
-    rows = [("Price ex GST", f"${ex:.2f}"), ("GST (9%)", f"${price - ex:.2f}"),
-            ("Ingredient cost", f"− ${cost:.2f}"), ("Gross profit", f"${price - cost:.2f}")]
-    body = "".join(
-        f'<div style="display:flex;gap:12px;font-size:0.9rem;padding:2px 0"><span style="flex:1;color:{N700}">{k}</span>'
-        f'<span style="font-weight:700">{v}</span></div>' for k, v in rows
+    rows = [
+        ("Price ex GST", f"${ex:.2f}", False),
+        ("GST (9%)", f"${price - ex:.2f}", False),
+        ("Ingredient cost", f"− ${cost:.2f}", True),
+        ("Gross profit", f"${price - cost:.2f}", True),
+    ]
+    body_rows = ""
+    for i, (k, v, divider) in enumerate(rows):
+        sep = f'border-top:1px solid {N300};margin-top:6px;padding-top:6px;' if divider and i > 0 else ''
+        body_rows += (
+            f'<div style="display:flex;align-items:baseline;{sep}padding-bottom:2px">'
+            f'<span style="flex:1;font-size:0.88rem;color:{N700}">{k}</span>'
+            f'<span style="font-size:0.9rem;font-weight:700;font-family:Nunito,sans-serif;'
+            f'white-space:nowrap;min-width:64px;text-align:right">{v}</span></div>'
+        )
+    body = (
+        f'<div style="background:{CARD};border:1.5px solid {N300};border-radius:12px;'
+        f'padding:12px 16px;margin-bottom:8px">{body_rows}</div>'
     )
     fc = cost / price * 100
     target_price = cost / (TARGET_FOOD_COST / 100) if cost else 0
@@ -660,7 +673,7 @@ def price_check_html(cost, price) -> str:
         sub = (f"You could go down to ${target_price:.2f} before food cost passes {TARGET_FOOD_COST}%."
                if cost else "No ingredient costs yet — check prices on the Master Stock List.")
     return (
-        f'{body}<div style="margin-top:8px;padding:12px 14px;border-radius:14px;background:{bg};color:{fg}">'
+        f'{body}<div style="padding:12px 14px;border-radius:14px;background:{bg};color:{fg}">'
         f'<div style="font-weight:700;font-size:0.88rem">{head}</div>'
         f'<div style="font-size:0.8rem;line-height:1.4;margin-top:2px">{sub}</div></div>'
     )
