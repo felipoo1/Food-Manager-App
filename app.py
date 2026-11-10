@@ -1960,12 +1960,17 @@ elif page == "Recipes":
         }
         conn_tc.close()
 
+        st.markdown("""<style>
+.st-key-type_tab_Prep button, .st-key-type_tab_Dish button, .st-key-type_tab_Beverage button {
+    font-weight: 800 !important; font-size: 1rem !important; letter-spacing: 0.01em !important;
+}
+</style>""", unsafe_allow_html=True)
         tab_cols = st.columns(3)
         for i, t in enumerate(["Prep", "Dish", "Beverage"]):
             with tab_cols[i]:
                 cnt = type_total[t]
                 is_active = st.session_state.recipe_active_type == t
-                tab_label = f"{TYPE_EMOJI[t]} {t}  ·  {cnt}"
+                tab_label = f"{t} · {cnt}"
                 if st.button(
                     tab_label,
                     key=f"type_tab_{t}",
@@ -2333,11 +2338,20 @@ elif page == "Recipes":
             )
             selected_recipe_id = all_recipe_options[selected_recipe_name]
 
+            # Single connection: recipe + category + lines + ingredient pricing all in one shot
             conn = db.get_connection()
-            recipe = conn.execute("SELECT * FROM recipes WHERE id = ?", (selected_recipe_id,)).fetchone()
+            recipe = conn.execute("""
+                SELECT r.*, rc.name AS category_name
+                FROM recipes r
+                LEFT JOIN recipe_categories rc ON r.category_id = rc.id
+                WHERE r.id = ?
+            """, (selected_recipe_id,)).fetchone()
             lines = conn.execute("""
-                SELECT rl.*, i.name AS ingredient_name, i.base_unit AS ingredient_unit,
-                       sr.name AS sub_recipe_name, sr.yield_unit AS sub_recipe_unit
+                SELECT rl.*,
+                       i.name AS ingredient_name, i.base_unit AS ingredient_unit,
+                       i.purchase_price AS ing_price, i.purchase_qty AS ing_qty,
+                       sr.name AS sub_recipe_name, sr.yield_unit AS sub_recipe_unit,
+                       sr.yield_qty AS sub_yield_qty
                 FROM recipe_lines rl
                 LEFT JOIN ingredients i ON rl.ingredient_id = i.id
                 LEFT JOIN recipes sr ON rl.sub_recipe_id = sr.id
@@ -2347,12 +2361,9 @@ elif page == "Recipes":
 
             is_prep = recipe["type"] == "Prep"
             type_emoji = TYPE_EMOJI.get(recipe["type"], "📄")
+            cat_name = recipe["category_name"] or ""
 
             # ── Page header ───────────────────────────────────
-            conn2 = db.get_connection()
-            cat_row = conn2.execute("SELECT name FROM recipe_categories WHERE id = ?", (recipe["category_id"],)).fetchone()
-            conn2.close()
-            cat_name = cat_row["name"] if cat_row else ""
             st.markdown(f"""
 <div style="margin-bottom:4px;">
   <span style="color:#a29884;font-size:0.82rem;font-family:Nunito,sans-serif;font-weight:600;letter-spacing:.04em;">
@@ -2364,17 +2375,28 @@ elif page == "Recipes":
 </div>
 """, unsafe_allow_html=True)
 
-            # ── Costing tiles + ingredient table ──────────────
-            conn = db.get_connection()
+            # ── Costing: batch sub-recipe costs, compute ingredient costs in-memory ──
+            sub_ids = list({l["sub_recipe_id"] for l in lines if l["sub_recipe_id"] is not None})
+            sub_costs = {sid: db.compute_recipe_cost(sid) or 0.0 for sid in sub_ids}
+
             costed = []
             for line in lines:
-                lc = db.compute_line_cost(line, conn) or 0
                 if line["ingredient_id"] is not None:
+                    if line["ing_price"] and line["ing_qty"]:
+                        lc = (line["ing_price"] / line["ing_qty"]) * line["quantity"]
+                    else:
+                        lc = 0.0
                     costed.append((line, line["ingredient_name"], f"{line['quantity']:g} {line['ingredient_unit']}", lc, False))
                 else:
+                    sid = line["sub_recipe_id"]
+                    sub_total = sub_costs.get(sid, 0.0)
+                    if sub_total and line["sub_yield_qty"]:
+                        lc = (sub_total / line["sub_yield_qty"]) * line["quantity"]
+                    else:
+                        lc = 0.0
                     costed.append((line, line["sub_recipe_name"], f"{line['quantity']:g} {line['sub_recipe_unit']}", lc, True))
-            conn.close()
-            live_cost = db.compute_recipe_cost(selected_recipe_id) or 0
+
+            live_cost = sum(lc for _, _, _, lc, _ in costed)
             portions = recipe["portions"] if recipe["portions"] and recipe["portions"] > 0 else None
             per_portion = live_cost / portions if portions else live_cost
             price = recipe["selling_price"] or 0
@@ -2504,7 +2526,8 @@ elif page == "Recipes":
                                     with sb2:
                                         if st.button("Edit in Stock List", key=f"goto_msl_{panel_line_id}", type="secondary"):
                                             st.session_state.stock_mode = "edit"
-                                            st.session_state["edit_ingredient_select"] = p_ing["name"] if p_ing else ""
+                                            if p_ing:
+                                                st.session_state["edit_ingredient_select"] = f"{p_ing['name']} ({p_ing['purchase_size_label']})"
                                             st.session_state.current_page = "Master Stock List"
                                             st.session_state.pop("recipe_ing_panel", None)
                                             st.rerun()
