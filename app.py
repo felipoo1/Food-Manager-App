@@ -1764,6 +1764,49 @@ div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
                     st.session_state.stock_mode = "list"
                     st.rerun()
 
+            # ---- MERGE INTO ANOTHER INGREDIENT ----
+            st.write("")
+            st.write("**Merge into another ingredient**")
+            st.caption("Use this to fix duplicates — reassigns all recipe lines to the chosen ingredient, then deletes this one.")
+            all_ings = db.get_cached_ingredients_basic()
+            merge_options = {f"{r['name']} ({r['base_unit']})": r["id"] for r in all_ings if r["id"] != selected_id}
+            merge_key = f"merge_target_{selected_id}"
+            merge_confirm_key = f"merge_confirm_{selected_id}"
+
+            if merge_options:
+                chosen_merge_label = st.selectbox(
+                    "Replace with", list(merge_options.keys()),
+                    index=None, placeholder="Search for the correct ingredient…",
+                    key=merge_key, label_visibility="collapsed",
+                )
+                chosen_merge_id = merge_options[chosen_merge_label] if chosen_merge_label else None
+
+                if chosen_merge_id and not st.session_state.get(merge_confirm_key):
+                    if st.button("Merge & delete this duplicate", key=f"merge_btn_{selected_id}", type="secondary"):
+                        st.session_state[merge_confirm_key] = True
+                        st.rerun()
+                elif chosen_merge_id and st.session_state.get(merge_confirm_key):
+                    st.error(f"All recipe lines will move to **{chosen_merge_label}** and **{current['name']}** will be permanently deleted.")
+                    mc1, mc2 = st.columns([1, 1])
+                    with mc1:
+                        if st.button("Yes, merge & delete", key=f"merge_yes_{selected_id}", type="primary"):
+                            conn = db.get_connection()
+                            conn.execute("UPDATE recipe_lines SET ingredient_id=? WHERE ingredient_id=?", (chosen_merge_id, selected_id))
+                            conn.execute("UPDATE stock_takes SET ingredient_id=? WHERE ingredient_id=?", (chosen_merge_id, selected_id))
+                            conn.execute("DELETE FROM ingredients WHERE id=?", (selected_id,))
+                            conn.commit()
+                            conn.close()
+                            db.get_cached_ingredients_basic.clear()
+                            st.session_state.pop(merge_confirm_key, None)
+                            st.success(f"Merged into {chosen_merge_label} and deleted {current['name']}.")
+                            st.session_state.stock_mode = "list"
+                            st.rerun()
+                    with mc2:
+                        if st.button("Cancel", key=f"merge_no_{selected_id}"):
+                            st.session_state.pop(merge_confirm_key, None)
+                            st.rerun()
+
+            # ---- DELETE ----
             st.write("")
             st.write("**Delete this ingredient**")
             conn = db.get_connection()
