@@ -2688,7 +2688,7 @@ elif page == "Recipes":
                                 key=f"add_line_qty_ingredient_{selected_recipe_id}",
                                 label_visibility="collapsed",
                             )
-                        if chosen_id:
+                        if chosen_id and qty:
                             _preview_conn = db.get_connection()
                             _preview_cost = db.compute_line_cost(
                                 {"ingredient_id": chosen_id, "sub_recipe_id": None, "quantity": qty}, _preview_conn
@@ -2738,7 +2738,7 @@ elif page == "Recipes":
                             qty_entered = st.number_input(f"{entry_unit}", min_value=0.0, step=1.0, value=None,
                                 key=f"add_line_qty_prep_{selected_recipe_id}", label_visibility="collapsed")
                         qty = db.convert_to_base_unit(chosen_id, qty_entered or 0, entry_unit, prep_unit) if chosen_id else 0
-                        if chosen_id:
+                        if chosen_id and qty:
                             _preview_conn = db.get_connection()
                             _preview_cost = db.compute_line_cost(
                                 {"ingredient_id": None, "sub_recipe_id": chosen_id, "quantity": qty}, _preview_conn
