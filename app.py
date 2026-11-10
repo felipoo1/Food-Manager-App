@@ -2273,11 +2273,11 @@ elif page == "Recipes":
                             c1, c2, c3, c4, c5 = st.columns(CC, vertical_alignment="center")
                             prep_chip = " " + tag("Prep", "ok") if sub else ""
                             warn = (
-                                '<div style="font-size:0.72rem;color:#8c491a">No price on this ingredient</div>'
+                                ' <span style="font-size:0.72rem;font-weight:400;color:#a29884">· no price set</span>'
                                 if lc == 0 else ""
                             )
                             c1.markdown(
-                                f'<div style="font-weight:700;font-size:0.9rem;line-height:1.3">{name}{prep_chip}</div>{warn}',
+                                f'<div style="font-weight:700;font-size:0.9rem;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{name}{prep_chip}{warn}</div>',
                                 unsafe_allow_html=True,
                             )
                             c2.markdown(f'<span style="font-size:0.86rem;color:#645c50">{qty}</span>', unsafe_allow_html=True)
