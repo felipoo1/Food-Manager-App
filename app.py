@@ -1196,26 +1196,90 @@ div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
         if not ingredients:
             st.info("No ingredients yet. Click \"Add ingredient\" above to add your first one.")
 
-        elif st.session_state.stock_cat is None:
-            # ---- CATEGORY OVERVIEW ----
-            from theme_css import CARD, CARD_INNER, N700, INK, ACCENT
-            categories_all = ["Dairy", "Dry Goods", "Frozen", "Meat & Seafood", "Pantry", "Produce", "Other"]
-            cat_counts = {}
-            for r in ingredients:
-                cat = r["category"] or "Uncategorised"
-                cat_counts[cat] = cat_counts.get(cat, 0) + 1
+        else:
+            # ---- SEARCH BAR ----
+            st.markdown("""
+<style>
+.st-key-stock-search input[type="text"] {
+    background: #fff !important;
+    border: 1.5px solid #e7ddcb !important;
+    border-radius: 20px !important;
+    font-family: Nunito, sans-serif !important;
+    font-size: 0.95rem !important;
+    padding-left: 16px !important;
+    color: #201e1d !important;
+}
+.st-key-stock-search input[type="text"]:focus {
+    border-color: #c67139 !important;
+    box-shadow: 0 0 0 2px #fff2eb !important;
+}
+.st-key-stock-search label { display: none !important; }
+</style>
+""", unsafe_allow_html=True)
+            with st.container(key="stock-search"):
+                stock_query = st.text_input(
+                    "Search", placeholder="🔍  Search ingredients…",
+                    key="stock_search_query",
+                    label_visibility="collapsed",
+                )
 
-            uncategorised_n = cat_counts.get("Uncategorised", 0)
-            if uncategorised_n:
-                st.warning(f"{uncategorised_n} ingredient(s) have no category. Click **Uncategorised** below to fix them.")
+            if stock_query.strip():
+                # ---- SEARCH RESULTS ----
+                q = stock_query.strip().lower()
+                matched = [r for r in ingredients if q in r["name"].lower()
+                           or (r["primary_supplier_name"] and q in r["primary_supplier_name"].lower())
+                           or (r["category"] and q in r["category"].lower())]
+                if matched:
+                    st.markdown(
+                        f'<div style="font-size:0.8rem;color:#a29884;margin-bottom:6px">'
+                        f'{len(matched)} result{"s" if len(matched) != 1 else ""} for "{stock_query.strip()}"</div>',
+                        unsafe_allow_html=True,
+                    )
+                    with st.container(key="grid4-ingredients"):
+                        for r in matched:
+                            cost = db.cost_per_recipe_unit(r)
+                            with st.container(key=f"card-ing-{r['id']}"):
+                                stock_chip = ""
+                                if r["current_stock_qty"] is not None:
+                                    display_unit, factor = db.get_order_unit(r["base_unit"])
+                                    stock_display = r["current_stock_qty"] / factor
+                                    is_low = (r["min_stock_qty"] is not None
+                                              and r["current_stock_qty"] < r["min_stock_qty"])
+                                    stock_chip = tag(f"{stock_display:g} {display_unit}",
+                                                     "alert" if is_low else "neutral")
+                                cat_chip = tag(r["category"] or "Uncategorised", "neutral")
+                                st.markdown(card_html(r["name"], [
+                                    (f'{r["purchase_size_label"]} · ${r["purchase_price"]:.2f}' if r["purchase_price"] is not None else r["purchase_size_label"] or "", "meta"),
+                                    (f'${cost:.3f} / {r["recipe_unit_qty"]:g}{r["base_unit"]}', "strong"),
+                                    (r["primary_supplier_name"] or "No supplier set", "faint"),
+                                ], stock_chip + (" " + cat_chip if cat_chip else "")), unsafe_allow_html=True)
+                                if st.button("Edit", type="tertiary", key=f"link-ing-{r['id']}"):
+                                    st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
+                                    st.session_state.stock_mode = "edit"
+                                    st.rerun()
+                else:
+                    st.info(f"No ingredients match \"{stock_query.strip()}\".")
 
-            # Build ordered list: known categories first, then any extras, then Uncategorised last
-            known = [c for c in categories_all if c in cat_counts]
-            extras = [c for c in sorted(cat_counts) if c not in categories_all and c != "Uncategorised"]
-            cat_order = known + extras + (["Uncategorised"] if uncategorised_n else [])
+            elif st.session_state.stock_cat is None:
+                # ---- CATEGORY OVERVIEW ----
+                from theme_css import CARD, CARD_INNER, N700, INK, ACCENT
+                categories_all = ["Dairy", "Dry Goods", "Frozen", "Meat & Seafood", "Pantry", "Produce", "Other"]
+                cat_counts = {}
+                for r in ingredients:
+                    cat = r["category"] or "Uncategorised"
+                    cat_counts[cat] = cat_counts.get(cat, 0) + 1
 
-            # Inject tile button styles once
-            st.markdown(f"""
+                uncategorised_n = cat_counts.get("Uncategorised", 0)
+                if uncategorised_n:
+                    st.warning(f"{uncategorised_n} ingredient(s) have no category. Click **Uncategorised** below to fix them.")
+
+                # Build ordered list: known categories first, then any extras, then Uncategorised last
+                known = [c for c in categories_all if c in cat_counts]
+                extras = [c for c in sorted(cat_counts) if c not in categories_all and c != "Uncategorised"]
+                cat_order = known + extras + (["Uncategorised"] if uncategorised_n else [])
+
+                # Inject tile button styles once
+                st.markdown(f"""
 <style>
 .st-key-grid4-categories div[data-testid="stButton"] button {{
     background: {CARD_INNER} !important;
@@ -1243,22 +1307,22 @@ div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
 </style>
 """, unsafe_allow_html=True)
 
-            with st.container(key="grid4-categories"):
-                for cat in cat_order:
-                    n = cat_counts.get(cat, 0)
-                    cat_slug = cat.replace(" ", "-").replace("&", "and")
-                    label = f"{cat}\n{n} ingredient{'s' if n != 1 else ''}"
-                    if st.button(label, use_container_width=True, key=f"open-cat-{cat_slug}"):
-                        st.session_state.stock_cat = cat
-                        st.rerun()
+                with st.container(key="grid4-categories"):
+                    for cat in cat_order:
+                        n = cat_counts.get(cat, 0)
+                        cat_slug = cat.replace(" ", "-").replace("&", "and")
+                        label = f"{cat}\n{n} ingredient{'s' if n != 1 else ''}"
+                        if st.button(label, use_container_width=True, key=f"open-cat-{cat_slug}"):
+                            st.session_state.stock_cat = cat
+                            st.rerun()
 
-        else:
-            # ---- INGREDIENTS IN CATEGORY ----
-            from theme_css import N200, N800, INK
-            chosen_cat = st.session_state.stock_cat
-            shown = [r for r in ingredients if (r["category"] or "Uncategorised") == chosen_cat]
+            else:
+                # ---- INGREDIENTS IN CATEGORY ----
+                from theme_css import N200, N800, INK
+                chosen_cat = st.session_state.stock_cat
+                shown = [r for r in ingredients if (r["category"] or "Uncategorised") == chosen_cat]
 
-            st.markdown(f"""
+                st.markdown(f"""
 <style>
 .st-key-bulk_edit_cat_btn button {{
     background: {N200} !important;
@@ -1277,32 +1341,32 @@ div[data-testid="stButton"][class*="st-key-bulk_edit_btn"] button,
 }}
 </style>
 """, unsafe_allow_html=True)
-            if st.button("⊞  Bulk edit this category", key="bulk_edit_cat_btn"):
-                st.session_state["bulk_prefill_cat"] = chosen_cat
-                st.session_state.stock_mode = "bulk"
-                st.rerun()
+                if st.button("⊞  Bulk edit this category", key="bulk_edit_cat_btn"):
+                    st.session_state["bulk_prefill_cat"] = chosen_cat
+                    st.session_state.stock_mode = "bulk"
+                    st.rerun()
 
-            with st.container(key="grid4-ingredients"):
-                for r in shown:
-                    cost = db.cost_per_recipe_unit(r)
-                    with st.container(key=f"card-ing-{r['id']}"):
-                        stock_chip = ""
-                        if r["current_stock_qty"] is not None:
-                            display_unit, factor = db.get_order_unit(r["base_unit"])
-                            stock_display = r["current_stock_qty"] / factor
-                            is_low = (r["min_stock_qty"] is not None
-                                      and r["current_stock_qty"] < r["min_stock_qty"])
-                            stock_chip = tag(f"{stock_display:g} {display_unit}",
-                                             "alert" if is_low else "neutral")
-                        st.markdown(card_html(r["name"], [
-                            (f'{r["purchase_size_label"]} · ${r["purchase_price"]:.2f}' if r["purchase_price"] is not None else r["purchase_size_label"] or "", "meta"),
-                            (f'${cost:.3f} / {r["recipe_unit_qty"]:g}{r["base_unit"]}', "strong"),
-                            (r["primary_supplier_name"] or "No supplier set", "faint"),
-                        ], stock_chip), unsafe_allow_html=True)
-                        if st.button("Edit", type="tertiary", key=f"link-ing-{r['id']}"):
-                            st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
-                            st.session_state.stock_mode = "edit"
-                            st.rerun()
+                with st.container(key="grid4-ingredients"):
+                    for r in shown:
+                        cost = db.cost_per_recipe_unit(r)
+                        with st.container(key=f"card-ing-{r['id']}"):
+                            stock_chip = ""
+                            if r["current_stock_qty"] is not None:
+                                display_unit, factor = db.get_order_unit(r["base_unit"])
+                                stock_display = r["current_stock_qty"] / factor
+                                is_low = (r["min_stock_qty"] is not None
+                                          and r["current_stock_qty"] < r["min_stock_qty"])
+                                stock_chip = tag(f"{stock_display:g} {display_unit}",
+                                                 "alert" if is_low else "neutral")
+                            st.markdown(card_html(r["name"], [
+                                (f'{r["purchase_size_label"]} · ${r["purchase_price"]:.2f}' if r["purchase_price"] is not None else r["purchase_size_label"] or "", "meta"),
+                                (f'${cost:.3f} / {r["recipe_unit_qty"]:g}{r["base_unit"]}', "strong"),
+                                (r["primary_supplier_name"] or "No supplier set", "faint"),
+                            ], stock_chip), unsafe_allow_html=True)
+                            if st.button("Edit", type="tertiary", key=f"link-ing-{r['id']}"):
+                                st.session_state["edit_ingredient_select"] = f"{r['name']} ({r['purchase_size_label']})"
+                                st.session_state.stock_mode = "edit"
+                                st.rerun()
 
 
     # ---------------- BULK EDIT VIEW ----------------
