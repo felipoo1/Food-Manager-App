@@ -2502,7 +2502,21 @@ elif page == "Recipes":
                                     f'<div style="font-weight:700;font-size:0.9rem;line-height:1.3">{name}{prep_chip}</div>',
                                     unsafe_allow_html=True,
                                 )
-                            c2.markdown(f'<span style="font-size:0.86rem;color:#645c50">{qty}</span>', unsafe_allow_html=True)
+                            # Inline editable qty
+                            _unit = line["ingredient_unit"] if not sub else line["sub_recipe_unit"]
+                            _raw_qty = float(line["quantity"])
+                            _new_qty = c2.number_input(
+                                "qty", value=_raw_qty, min_value=0.0, step=0.5,
+                                key=f"qty-edit-{line['id']}", label_visibility="collapsed",
+                                format="%g"
+                            )
+                            c2.caption(_unit)
+                            if abs(_new_qty - _raw_qty) > 0.0001:
+                                _c = db.get_connection()
+                                _c.execute("UPDATE recipe_lines SET quantity=? WHERE id=?", (_new_qty, line["id"]))
+                                _c.commit()
+                                _c.close()
+                                st.rerun()
                             c3.markdown(f'<span style="font-size:0.9rem;font-weight:700">${lc:.2f}</span>', unsafe_allow_html=True)
                             bar = "#c67139" if share >= 40 else "#82796a"
                             c4.markdown(
@@ -2547,18 +2561,18 @@ elif page == "Recipes":
             # ── Add ingredient — inline row ────────────────────
             st.markdown(section_head("Add ingredient", ""), unsafe_allow_html=True)
 
-            # CSS: suppress faint divider lines + style clickable ingredient names
+            # CSS: suppress faint divider lines + style clickable ingredient names + inline qty input
             st.markdown("""
 <style>
+/* kill all borders/backgrounds on every wrapper layer inside the table */
 .st-key-costtable > div, .st-key-costhead > div,
-[class*="st-key-costrow-"] > div {
+[class*="st-key-costrow-"] > div,
+[class*="st-key-costrow-"] > div > div,
+.st-key-costhead > div > div,
+.st-key-costtable [data-testid="stVerticalBlockBorderWrapper"],
+[class*="st-key-costrow-"] [data-testid="stVerticalBlockBorderWrapper"] {
     border: none !important;
     box-shadow: none !important;
-    background: transparent !important;
-}
-/* remove any white gaps between rows */
-[class*="st-key-costrow-"] > div > div,
-.st-key-costhead > div > div {
     background: transparent !important;
 }
 .st-key-costtable [data-testid="stHorizontalBlock"] {
@@ -2589,7 +2603,41 @@ elif page == "Recipes":
     color: #c67139 !important;
     text-decoration-color: #c67139 !important;
 }
-
+/* Inline qty number input — looks like plain text, lights up on hover/focus */
+[class*="st-key-costrow-"] [data-testid="stNumberInput"] > div {
+    background: transparent !important;
+    border: none !important;
+    min-height: 0 !important;
+}
+[class*="st-key-costrow-"] [data-testid="stNumberInput"] input {
+    padding: 2px 4px !important;
+    font-size: 0.86rem !important;
+    color: #645c50 !important;
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    border-radius: 6px !important;
+    min-height: 0 !important;
+    height: 28px !important;
+    font-weight: 600 !important;
+    width: 100% !important;
+    transition: border-color 0.15s, background 0.15s !important;
+}
+[class*="st-key-costrow-"] [data-testid="stNumberInput"] input:hover {
+    border-color: #dcd3c4 !important;
+    background: #faf7f2 !important;
+}
+[class*="st-key-costrow-"] [data-testid="stNumberInput"] input:focus {
+    border-color: #c67139 !important;
+    background: #fff !important;
+    color: #201e1d !important;
+    outline: none !important;
+}
+[class*="st-key-costrow-"] [data-testid="stCaptionContainer"] p {
+    font-size: 0.72rem !important;
+    color: #a29884 !important;
+    margin: 0 !important;
+    line-height: 1.1 !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
