@@ -660,29 +660,33 @@ def price_check_html(cost, price) -> str:
             f'<span style="min-width:52px;text-align:right;display:inline-block">{amt}</span>'
             f'</span></div>'
         )
-    body = (
-        f'<div style="background:{CARD};border:1.5px solid {N300};border-radius:12px;'
-        f'padding:12px 16px;margin-bottom:8px">{body_rows}</div>'
-    )
     fc = cost / price * 100
     target_price = cost / (TARGET_FOOD_COST / 100) if cost else 0
     if fc > TARGET_FOOD_COST:
-        bg, fg = ACCENT_100, "#6b3613"
+        verdict_bg, verdict_fg = ACCENT_100, "#6b3613"
         head = f"Food cost is above {TARGET_FOOD_COST}%"
         sub = f"Raise the price to ${target_price:.2f} or trim the costliest ingredient."
     else:
-        bg, fg = "#e9ede1", "#3f4a2c"
+        verdict_bg, verdict_fg = "#e9ede1", "#3f4a2c"
         head = f"Within the {TARGET_FOOD_COST}% target"
         sub = (f"You could go down to ${target_price:.2f} before food cost passes {TARGET_FOOD_COST}%."
                if cost else "No ingredient costs yet — check prices on the Master Stock List.")
     fc_label = f"{fc:.0f}% food cost"
-    return (
-        f'{body}<div style="padding:12px 14px;border-radius:14px;background:{bg};color:{fg}">'
+    verdict = (
+        f'<div style="padding:12px 16px;border-top:1.5px solid {N300};background:{verdict_bg};'
+        f'border-radius:0 0 12px 12px;color:{verdict_fg}">'
         f'<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">'
         f'<span style="font-weight:700;font-size:0.88rem">{head}</span>'
         f'<span style="font-size:0.78rem;font-weight:700;opacity:0.75;white-space:nowrap">{fc_label}</span>'
         f'</div>'
-        f'<div style="font-size:0.8rem;line-height:1.4;margin-top:5px;opacity:0.85">{sub}</div></div>'
+        f'<div style="font-size:0.8rem;line-height:1.4;margin-top:4px;opacity:0.85">{sub}</div>'
+        f'</div>'
+    )
+    return (
+        f'<div style="background:{CARD};border:1.5px solid {N300};border-radius:12px;overflow:hidden">'
+        f'<div style="padding:12px 16px">{body_rows}</div>'
+        f'{verdict}'
+        f'</div>'
     )
 
 
