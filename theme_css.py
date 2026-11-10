@@ -643,19 +643,22 @@ def price_check_html(cost, price) -> str:
         return f'<div style="font-size:0.85rem;color:{N700}">Enter a selling price to see food cost and margin.</div>'
     ex = price / 1.09
     rows = [
-        ("Price ex GST", f"${ex:.2f}", False),
-        ("GST (9%)", f"${price - ex:.2f}", False),
-        ("Ingredient cost", f"− ${cost:.2f}", True),
-        ("Gross profit", f"${price - cost:.2f}", True),
+        ("Price ex GST", "", f"${ex:.2f}", False),
+        ("GST (9%)", "", f"${price - ex:.2f}", False),
+        ("Ingredient cost", "−", f"${cost:.2f}", True),
+        ("Gross profit", "", f"${price - cost:.2f}", True),
     ]
     body_rows = ""
-    for i, (k, v, divider) in enumerate(rows):
+    for i, (k, sign, amt, divider) in enumerate(rows):
         sep = f'border-top:1px solid {N300};margin-top:6px;padding-top:6px;' if divider and i > 0 else ''
         body_rows += (
             f'<div style="display:flex;align-items:baseline;{sep}padding-bottom:2px">'
             f'<span style="flex:1;font-size:0.88rem;color:{N700}">{k}</span>'
             f'<span style="font-size:0.9rem;font-weight:700;font-family:Nunito,sans-serif;'
-            f'white-space:nowrap;min-width:64px;text-align:right">{v}</span></div>'
+            f'white-space:nowrap;display:inline-flex;align-items:baseline;gap:1px">'
+            f'<span style="width:0.9em;text-align:right;display:inline-block">{sign}</span>'
+            f'<span style="min-width:52px;text-align:right;display:inline-block">{amt}</span>'
+            f'</span></div>'
         )
     body = (
         f'<div style="background:{CARD};border:1.5px solid {N300};border-radius:12px;'
