@@ -2049,8 +2049,8 @@ elif page == "Recipes":
 }
 /* Category card containers */
 [class*="st-key-catcard-"] {
-    background: #fffcf8 !important;
-    border: 1.5px solid #e6ddd1 !important;
+    background: #fbf7f1 !important;
+    border: 1.5px solid #dcd3c4 !important;
     border-radius: 14px !important;
     overflow: hidden !important;
     transition: transform 0.15s ease, box-shadow 0.15s ease !important;
@@ -2074,9 +2074,9 @@ elif page == "Recipes":
 }
 /* Open button — styled as card footer bar */
 [class*="st-key-catcard-"] [data-testid="stButton"] button {
-    background: #faf6f0 !important;
+    background: #f0e8da !important;
     border: none !important;
-    border-top: 1px solid #e6ddd1 !important;
+    border-top: 1px solid #dcd3c4 !important;
     border-radius: 0 !important;
     width: 100% !important;
     text-align: right !important;
