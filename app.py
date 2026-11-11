@@ -1966,7 +1966,7 @@ elif page == "Recipes":
     if "recipe_mode" not in st.session_state:
         st.session_state.recipe_mode = "categories"
     if "recipe_active_type" not in st.session_state:
-        st.session_state.recipe_active_type = "Prep"
+        st.session_state.recipe_active_type = "All"
 
     if page_header(
         "Recipes", "Costed from the master stock list.",
@@ -2022,87 +2022,174 @@ elif page == "Recipes":
                     cols[3].write(f"**Cost:** ${cost:.2f}")
 
     elif st.session_state.recipe_mode == "categories":
-        # --- Type tabs with recipe counts (from cache — zero extra DB calls) ---
+        # --- Counts from cache (zero extra DB calls) ---
         _all_recipes_cache = db.get_cached_recipes()
         type_total = {"Prep": 0, "Dish": 0, "Beverage": 0}
         for _r in _all_recipes_cache:
             if _r["type"] in type_total:
                 type_total[_r["type"]] += 1
 
+        TYPE_COLORS = {"Dish": "#c67139", "Prep": "#4e8963", "Beverage": "#3b7ea6"}
+        TYPE_SOFT   = {"Dish": "#f5ede0", "Prep": "#e8f3ec", "Beverage": "#e3f0f8"}
+
+        # === Global CSS for the redesigned card grid ===
         st.markdown("""<style>
-.st-key-type_tab_Prep button, .st-key-type_tab_Dish button, .st-key-type_tab_Beverage button {
-    font-weight: 800 !important; font-size: 1rem !important; letter-spacing: 0.01em !important;
+/* Filter pill tabs */
+.st-key-ftab_All button, .st-key-ftab_Dish button,
+.st-key-ftab_Prep button, .st-key-ftab_Beverage button {
+    border-radius: 100px !important;
+    font-size: 0.8rem !important;
+    font-weight: 800 !important;
+    letter-spacing: 0.04em !important;
+    text-transform: uppercase !important;
+    height: 36px !important;
+    min-height: 0 !important;
+    padding: 0 14px !important;
+    white-space: nowrap !important;
+}
+/* Category card containers */
+[class*="st-key-catcard-"] {
+    background: #fffcf8 !important;
+    border: 1.5px solid #e6ddd1 !important;
+    border-radius: 14px !important;
+    overflow: hidden !important;
+    transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+    margin-bottom: 10px !important;
+    cursor: pointer !important;
+}
+[class*="st-key-catcard-"]:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 6px 24px rgba(50,30,5,.10) !important;
+}
+/* Zero gap between card HTML and open button */
+[class*="st-key-catcard-"] [data-testid="stVerticalBlock"] {
+    gap: 0 !important;
+}
+[class*="st-key-catcard-"] [data-testid="stMarkdownContainer"] {
+    margin-bottom: 0 !important;
+    padding-bottom: 0 !important;
+}
+[class*="st-key-catcard-"] [data-testid="element-container"] {
+    margin-bottom: 0 !important;
+}
+/* Open button — styled as card footer bar */
+[class*="st-key-catcard-"] [data-testid="stButton"] button {
+    background: #faf6f0 !important;
+    border: none !important;
+    border-top: 1px solid #e6ddd1 !important;
+    border-radius: 0 !important;
+    width: 100% !important;
+    text-align: right !important;
+    color: #a0917f !important;
+    font-size: 0.78rem !important;
+    font-weight: 700 !important;
+    padding: 8px 16px !important;
+    height: auto !important;
+    min-height: 0 !important;
+    letter-spacing: 0.03em !important;
+    box-shadow: none !important;
+}
+[class*="st-key-catcard-"] [data-testid="stButton"] button:hover {
+    background: #f0e8da !important;
+    color: #c67139 !important;
 }
 </style>""", unsafe_allow_html=True)
-        tab_cols = st.columns(3)
-        for i, t in enumerate(["Prep", "Dish", "Beverage"]):
+
+        # === Filter tabs: All / Dish / Prep / Beverage ===
+        all_total = sum(type_total.values())
+        tab_defs = [
+            ("All",      all_total),
+            ("Dish",     type_total["Dish"]),
+            ("Prep",     type_total["Prep"]),
+            ("Beverage", type_total["Beverage"]),
+        ]
+        tab_cols = st.columns(4)
+        for i, (t, cnt) in enumerate(tab_defs):
             with tab_cols[i]:
-                cnt = type_total[t]
                 is_active = st.session_state.recipe_active_type == t
-                tab_label = f"{t} · {cnt}"
                 if st.button(
-                    tab_label,
-                    key=f"type_tab_{t}",
+                    f"{t}  {cnt}",
+                    key=f"ftab_{t}",
                     type="primary" if is_active else "secondary",
                     use_container_width=True,
                 ):
                     st.session_state.recipe_active_type = t
                     st.rerun()
+
         rtype = st.session_state.recipe_active_type
+        types_to_query = ["Prep", "Dish", "Beverage"] if rtype == "All" else [rtype]
 
         conn = db.get_connection()
-        categories = conn.execute(
-            "SELECT * FROM recipe_categories WHERE type = ? ORDER BY name", (rtype,)
-        ).fetchall()
-        counts = {}
-        for c in categories:
-            counts[c["id"]] = conn.execute(
-                "SELECT COUNT(*) AS n FROM recipes WHERE category_id = ?", (c["id"],)
-            ).fetchone()["n"]
+        all_cats = []
+        for t in types_to_query:
+            cats = conn.execute(
+                "SELECT * FROM recipe_categories WHERE type = ? ORDER BY name", (t,)
+            ).fetchall()
+            for c in cats:
+                count = conn.execute(
+                    "SELECT COUNT(*) AS n FROM recipes WHERE category_id = ?", (c["id"],)
+                ).fetchone()["n"]
+                previews = conn.execute(
+                    "SELECT name FROM recipes WHERE category_id = ? ORDER BY name LIMIT 3",
+                    (c["id"],),
+                ).fetchall()
+                all_cats.append({
+                    "cat": c,
+                    "count": count,
+                    "previews": [r["name"] for r in previews],
+                })
         conn.close()
 
-        if not categories:
-            st.info(
-                f"No **{rtype}** categories yet — {type_total[rtype]} recipe(s) in this type. "
-                f"Click **\"New category\"** above to create one (e.g. \"Coffee Preps\", \"Pasta\")."
-                if type_total[rtype]
-                else f"No **{rtype}** categories yet. Click **\"New category\"** above to create one."
-            )
+        if not all_cats:
+            label = rtype if rtype != "All" else "any"
+            st.info(f"No **{label}** categories yet. Click **\"New category\"** above to create one.")
         else:
-            st.markdown("""
-<style>
-.st-key-recipecats-list div[data-testid="stButton"] button {
-    background: #fbf7f1 !important;
-    border: 2px solid #e7ddcb !important;
-    border-radius: 12px !important;
-    padding: 18px 22px !important;
-    text-align: left !important;
-    height: auto !important;
-    min-height: 68px !important;
-    width: 100% !important;
-    color: #201e1d !important;
-    font-family: Nunito, sans-serif !important;
-    font-weight: 700 !important;
-    font-size: 1.05rem !important;
-    box-shadow: none !important;
-    line-height: 1.4 !important;
-}
-.st-key-recipecats-list div[data-testid="stButton"] button:hover {
-    border-color: #c67139 !important;
-    background: #e7ddcb !important;
-}
-</style>
+            grid_cols = st.columns(2, gap="small")
+            for i, item in enumerate(all_cats):
+                cat   = item["cat"]
+                count = item["count"]
+                prvs  = item["previews"]
+                tc    = TYPE_COLORS[cat["type"]]
+                ts    = TYPE_SOFT[cat["type"]]
+                more  = count - len(prvs)
+
+                preview_html = "".join(
+                    f'<div style="line-height:1.6">· {p}</div>' for p in prvs
+                )
+                if more > 0:
+                    preview_html += (
+                        f'<div style="color:#a0917f;font-style:italic;'
+                        f'font-size:0.73rem;margin-top:3px">+{more} more</div>'
+                    )
+                if not preview_html:
+                    preview_html = (
+                        '<div style="color:#b0a090;font-style:italic;'
+                        'font-size:0.73rem">No recipes yet</div>'
+                    )
+
+                with grid_cols[i % 2]:
+                    with st.container(key=f"catcard-{cat['id']}"):
+                        st.markdown(f"""
+<style>.st-key-catcard-{cat['id']} {{ border-left: 4px solid {tc} !important; }}</style>
+<div style="padding:16px 18px 14px 18px;">
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:10px">
+    <span style="font-size:1.05rem;font-weight:800;color:#251e17;line-height:1.3;flex:1">{cat['name']}</span>
+    <div style="text-align:right;flex-shrink:0">
+      <div style="font-size:1.85rem;font-weight:900;color:{tc};line-height:1;letter-spacing:-0.03em">{count}</div>
+      <div style="font-size:0.6rem;font-weight:800;color:#a0917f;letter-spacing:.08em;text-transform:uppercase;line-height:1;margin-top:2px">recipe{'s' if count != 1 else ''}</div>
+    </div>
+  </div>
+  <div style="font-size:0.78rem;font-weight:600;color:#6b5c4c;min-height:34px;margin-bottom:12px">
+    {preview_html}
+  </div>
+  <span style="font-size:0.63rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:{tc};background:{ts};padding:3px 10px;border-radius:100px">{cat['type']}</span>
+</div>
 """, unsafe_allow_html=True)
-            with st.container(key="recipecats-list"):
-                for cat in categories:
-                    n = counts[cat["id"]]
-                    count_str = f"{n} recipe{'s' if n != 1 else ''}"
-                    btn_label = f"{cat['name']}  ·  {count_str}"
-                    if st.button(btn_label, key=f"cardtitle-{cat['id']}", use_container_width=True):
-                        st.session_state.recipe_active_category_id = cat["id"]
-                        st.session_state.recipe_active_type = rtype
-                        st.session_state.recipe_mode = "category_detail"
-                        st.rerun()
+                        if st.button("Open →", key=f"opencat-{cat['id']}", use_container_width=True):
+                            st.session_state.recipe_active_category_id = cat["id"]
+                            st.session_state.recipe_active_type = cat["type"]
+                            st.session_state.recipe_mode = "category_detail"
+                            st.rerun()
 
     # ======================================================
     # ADD CATEGORY
